@@ -24,3 +24,32 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* pixel-art assets: no smoothing */
+.pixel {
+  image-rendering: pixelated;
+}
+
+/* 8-frame 192px sprite strip, played via steps() */
+@keyframes sprite-idle {
+  from {
+    background-position-x: 0;
+  }
+  to {
+    background-position-x: -1536px;
+  }
+}
+
+.sprite-idle {
+  width: 192px;
+  height: 192px;
+  background-image: url("/game-assets/Units/Blue Units/Warrior/Warrior_Idle.png");
+  image-rendering: pixelated;
+  animation: sprite-idle 1s steps(8) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sprite-idle {
+    animation: none;
+  }
+}

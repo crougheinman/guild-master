@@ -1,65 +1,142 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState } from "react";
+import { ICONS } from "@/components/assets";
+import Dungeons from "@/components/Dungeons";
+import Forge from "@/components/Forge";
+import GameTicker from "@/components/GameTicker";
+import Market from "@/components/Market";
+import RightPanel from "@/components/RightPanel";
+import Tavern from "@/components/Tavern";
+import { useGuildStore, type MaterialKey } from "@/store/useGuildStore";
+
+type Tab = "tavern" | "dungeons" | "forge" | "market";
+
+const NAV_TABS: { id: Tab; label: string }[] = [
+  { id: "tavern", label: "Tavern" },
+  { id: "dungeons", label: "Dungeons" },
+  { id: "forge", label: "Forge" },
+  { id: "market", label: "Market" },
+];
+
+const RESOURCES: {
+  key: MaterialKey | "gold";
+  label: string;
+  icon: string;
+}[] = [
+  { key: "gold", label: "Gold", icon: ICONS.gold },
+  { key: "organics", label: "Organics", icon: ICONS.organics },
+  { key: "minerals", label: "Minerals", icon: ICONS.minerals },
+  { key: "botanicals", label: "Botanicals", icon: ICONS.botanicals },
+];
+
+export default function Dashboard() {
+  const ledger = useGuildStore((s) => s.ledger);
+  const [activeTab, setActiveTab] = useState<Tab>("tavern");
+
+  // persist middleware hydrates from localStorage on client only —
+  // render values after mount to avoid SSR hydration mismatch
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="grid h-dvh w-full grid-cols-[20%_55%_25%] overflow-hidden bg-slate-950 text-slate-200">
+      <GameTicker />
+      {/* ── Left: Command Center ── */}
+      <aside className="flex flex-col overflow-y-auto border-r border-slate-800 bg-slate-900">
+        <header className="border-b border-slate-800 px-4 py-5">
+          <h1 className="font-semibold tracking-wide text-amber-400">
+            Micro-Guildmaster
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+          <p className="mt-0.5 text-xs text-slate-500">Command Center</p>
+        </header>
+
+        <section aria-label="Treasury" className="border-b border-slate-800 px-4 py-4">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Treasury
+          </h2>
+          <ul className="space-y-2">
+            {RESOURCES.map((r) => (
+              <li
+                key={r.key}
+                className="flex items-center gap-2.5 rounded-md bg-slate-800/50 px-3 py-2"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- pixel art: next/image resampling would blur it */}
+                <img
+                  src={r.icon}
+                  alt=""
+                  width={22}
+                  height={22}
+                  className="pixel size-[22px] object-contain"
+                />
+                <span className="text-sm text-slate-400">{r.label}</span>
+                <span className="ml-auto font-mono text-sm tabular-nums text-slate-100">
+                  {hydrated
+                    ? (r.key === "gold"
+                        ? ledger.gold
+                        : ledger.materials[r.key]
+                      ).toLocaleString()
+                    : "—"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <nav aria-label="Guild navigation" className="px-4 py-4">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Navigation
+          </h2>
+          <div className="space-y-1.5">
+            {NAV_TABS.map((tab) => {
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  aria-current={active ? "page" : undefined}
+                  className={`block min-h-11 w-full cursor-pointer rounded-md border px-3 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
+                    active
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                      : "border-transparent text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      </aside>
+
+      {/* ── Center: Main Stage ── */}
+      <main className="flex flex-col overflow-y-auto">
+        {/* reserved for PixiJS combat visualizer — idle warrior stands guard meanwhile */}
+        <div className="relative flex h-[15%] shrink-0 items-center justify-center overflow-hidden border-b border-slate-800 bg-slate-900/50">
+          <div className="sprite-idle absolute bottom-[-48px] origin-bottom scale-75" aria-hidden="true" />
+          <span className="absolute bottom-1 right-2 text-[10px] uppercase tracking-widest text-slate-700">
+            Combat Visualizer — coming soon
+          </span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="flex-1 overflow-y-auto">
+          {!hydrated ? null : activeTab === "tavern" ? (
+            <Tavern />
+          ) : activeTab === "dungeons" ? (
+            <Dungeons />
+          ) : activeTab === "forge" ? (
+            <Forge />
+          ) : (
+            <Market />
+          )}
         </div>
       </main>
+
+      {/* ── Right: Roster & Log ── */}
+      <aside className="overflow-hidden border-l border-slate-800 bg-slate-900">
+        {/* gate on hydration: roster/log read persisted state */}
+        {hydrated && <RightPanel />}
+      </aside>
     </div>
   );
 }
