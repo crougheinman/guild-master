@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { DUNGEON_ART } from "@/components/assets";
+import CombatVisualizer from "@/components/CombatVisualizer";
 import { useGuildStore, type Dungeon, type Hero } from "@/store/useGuildStore";
 
 const formatDuration = (ms: number) =>
@@ -98,9 +99,15 @@ export default function Dungeons() {
   const dungeons = useGuildStore((s) => s.dungeons);
   const heroes = useGuildStore((s) => s.heroes);
   const idleHeroes = heroes.filter((h) => h.status === "idle");
+  const anyQuesting = heroes.some((h) => h.status === "on_quest");
 
   return (
     <div className="p-4">
+      {anyQuesting && (
+        <div className="mb-4">
+          <CombatVisualizer />
+        </div>
+      )}
       <h2 className="mb-4 text-lg font-semibold text-slate-100">Dungeons</h2>
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {dungeons.map((d) => (

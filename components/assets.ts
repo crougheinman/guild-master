@@ -18,6 +18,33 @@ export const DUNGEON_ART: Record<string, string> = {
   "dungeon-2": "/game-assets/Buildings/Red Buildings/Barracks.png", // Bandit Camp
 };
 
+// combat sprite strips — every frame 192×192, laid out horizontally
+export const WARRIOR_SIZE = 192;
+
+export const WARRIOR_FRAMES = {
+  idle: 8,
+  attack1: 4,
+  attack2: 4,
+  guard: 6,
+} as const;
+
+export type WarriorAnim = keyof typeof WARRIOR_FRAMES;
+
+const warriorStrips = (color: "Blue" | "Red") => {
+  const base = `/game-assets/Units/${color} Units/Warrior/Warrior_`;
+  return {
+    idle: `${base}Idle.png`,
+    attack1: `${base}Attack1.png`,
+    attack2: `${base}Attack2.png`,
+    guard: `${base}Guard.png`,
+  } as Record<WarriorAnim, string>;
+};
+
+export const WARRIOR_URLS = {
+  hero: warriorStrips("Blue"),
+  enemy: warriorStrips("Red"),
+} as const;
+
 const AVATAR_COUNT = 25;
 
 // stable portrait per hero, derived from id — no schema change, no migration
