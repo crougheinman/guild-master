@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AnimatedSprite,
   Application,
@@ -85,6 +85,26 @@ export default function CombatVisualizer() {
     .map((h) => h.id)
     .sort()
     .join(",");
+
+  // container resize (rotation, breakpoint change) → rebuild scene at new size
+  const [sizeKey, setSizeKey] = useState(0);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let last = host.clientWidth;
+    let t: ReturnType<typeof setTimeout>;
+    const ro = new ResizeObserver(() => {
+      if (Math.abs(host.clientWidth - last) < 24) return; // ignore jitter
+      last = host.clientWidth;
+      clearTimeout(t);
+      t = setTimeout(() => setSizeKey((k) => k + 1), 300); // debounce
+    });
+    ro.observe(host);
+    return () => {
+      ro.disconnect();
+      clearTimeout(t);
+    };
+  }, [questingKey]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -403,7 +423,7 @@ export default function CombatVisualizer() {
       cancelled = true;
       if (ready) app.destroy(true, { children: true }); // free WebGL context
     };
-  }, [questingKey]);
+  }, [questingKey, sizeKey]);
 
   if (questing.length === 0) {
     return (

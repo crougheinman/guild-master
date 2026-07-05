@@ -11,6 +11,8 @@ export const ICONS = {
   fortitude: `${UI}/Icons/Icon_06.png`, // shield
   speed: `${UI}/Icons/Icon_08.png`, // arrow
   forge: `${UI}/Icons/Icon_01.png`, // hammer
+  settings: `${UI}/Icons/Icon_10.png`, // gear
+  roster: `${UI}/Human Avatars/Avatars_01.png`, // helm portrait
 } as const;
 
 export const DUNGEON_ART: Record<string, string> = {

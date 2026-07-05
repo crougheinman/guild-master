@@ -39,7 +39,7 @@ export default function Tavern() {
       {candidates.length === 0 ? (
         <p className="text-sm text-slate-500">The tavern is empty tonight.</p>
       ) : (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {candidates.map((c) => (
             <li
               key={c.id}
