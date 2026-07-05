@@ -78,6 +78,21 @@ export function unitAnims(team: Team, job: Job): JobAnims {
   }
 }
 
+// Orc enemy — 100px frames, faces right (mirror to face the hero). One type.
+const ORC = "/game-assets/Enemies/Orc";
+export function orcAnims(): JobAnims {
+  return {
+    size: 100,
+    idle: { url: `${ORC}/Orc-Idle.png`, frames: 6 },
+    attacks: [
+      { url: `${ORC}/Orc-Attack01.png`, frames: 6 },
+      { url: `${ORC}/Orc-Attack02.png`, frames: 6 },
+    ],
+    // no guard clip — defender falls back to idle
+  };
+}
+export const ORC_HURT = { url: `${ORC}/Orc-Hurt.png`, frames: 4, size: 100 };
+
 // ── combat FX + backdrop ──
 export const PARTICLES = {
   dust: { url: "/game-assets/Particle FX/Dust_02.png", frames: 10, size: 64 },
@@ -90,19 +105,40 @@ export const PARTICLES = {
 
 export const BACKDROP = {
   tilemap: "/game-assets/Terrain/Tileset/Tilemap_color1.png",
-  // grass-topped cliff tile inside the tilemap, tiles horizontally
-  groundTile: { x: 384, y: 320, w: 64, h: 64 },
+  // flat grass tile (64x64 grid unit per Tiny Swords tilemap-guide), tiles horizontally
+  groundTile: { x: 64, y: 64, w: 64, h: 64 },
+  shadow: "/game-assets/Terrain/Tileset/Shadow.png", // 192px soft blob, foot shadow
   clouds: [
     "/game-assets/Terrain/Decorations/Clouds/Clouds_01.png",
     "/game-assets/Terrain/Decorations/Clouds/Clouds_02.png",
   ],
   tower: "/game-assets/Buildings/Blue Buildings/Tower.png",
   castle: "/game-assets/Buildings/Blue Buildings/Castle.png",
-  bush: "/game-assets/Terrain/Decorations/Bushes/Bushe1.png", // 8 frames @128px
+  // 4 bush variants, each an 8-frame 128px strip (use frame 0 as a static bush)
+  bushes: [
+    "/game-assets/Terrain/Decorations/Bushes/Bushe1.png",
+    "/game-assets/Terrain/Decorations/Bushes/Bushe2.png",
+    "/game-assets/Terrain/Decorations/Bushes/Bushe3.png",
+    "/game-assets/Terrain/Decorations/Bushes/Bushe4.png",
+  ],
+  bushFrames: 8,
+  bushSize: 128,
+  // 4 single 64px boulders
   rocks: [
     "/game-assets/Terrain/Decorations/Rocks/Rock1.png",
     "/game-assets/Terrain/Decorations/Rocks/Rock2.png",
+    "/game-assets/Terrain/Decorations/Rocks/Rock3.png",
+    "/game-assets/Terrain/Decorations/Rocks/Rock4.png",
   ],
+  // 4 water-rock variants, each a 16-frame 64px animated ripple
+  waterRocks: [
+    "/game-assets/Terrain/Decorations/Rocks in the Water/Water Rocks_01.png",
+    "/game-assets/Terrain/Decorations/Rocks in the Water/Water Rocks_02.png",
+    "/game-assets/Terrain/Decorations/Rocks in the Water/Water Rocks_03.png",
+    "/game-assets/Terrain/Decorations/Rocks in the Water/Water Rocks_04.png",
+  ],
+  waterRockFrames: 16,
+  waterRockSize: 64,
 } as const;
 
 const AVATAR_COUNT = 25;

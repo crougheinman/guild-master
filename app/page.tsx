@@ -114,7 +114,7 @@ export default function Dashboard() {
       {/* ── Center: Main Stage ── */}
       <main className="flex flex-col overflow-y-auto">
         {/* permanent combat stage — live PixiJS duels while heroes quest */}
-        <div className="h-[22%] min-h-[150px] shrink-0 border-b border-slate-800 bg-slate-900/50">
+        <div className="h-[32%] min-h-[220px] shrink-0 border-b border-slate-800 bg-slate-900/50">
           {hydrated && <CombatVisualizer />}
         </div>
         <div className="flex-1 overflow-y-auto">

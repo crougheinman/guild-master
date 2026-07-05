@@ -1,8 +1,14 @@
 "use client";
 
-import { avatarFor } from "@/components/assets";
+import { useState } from "react";
+import { avatarFor, ICONS } from "@/components/assets";
 import CountdownBar from "@/components/CountdownBar";
-import { HEAL_COST, useGuildStore, type HeroStatus } from "@/store/useGuildStore";
+import {
+  HEAL_COST,
+  useGuildStore,
+  type Hero,
+  type HeroStatus,
+} from "@/store/useGuildStore";
 
 const STATUS_LABEL: Record<HeroStatus, { text: string; className: string }> = {
   idle: { text: "idle", className: "text-emerald-400" },
@@ -16,6 +22,73 @@ function hpBarColor(pct: number) {
   return "bg-rose-500";
 }
 
+const weaponPower = (h: Hero) => h.gear.weapon?.base_stats.power ?? 0;
+
+// compact always-visible stat strip (1)
+function QuickStats({ hero }: { hero: Hero }) {
+  const wp = weaponPower(hero);
+  return (
+    <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+      <div className="flex items-center gap-1.5">
+        {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
+        <img src={ICONS.power} alt="Power" width={14} height={14} className="pixel size-3.5 object-contain" />
+        <dt className="sr-only">Power</dt>
+        <dd className="font-mono tabular-nums text-slate-300">
+          {hero.stats.power}
+          {wp > 0 && <span className="text-emerald-400"> +{wp}</span>}
+        </dd>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
+        <img src={ICONS.speed} alt="Speed" width={14} height={14} className="pixel size-3.5 object-contain" />
+        <dt className="sr-only">Speed</dt>
+        <dd className="font-mono tabular-nums text-slate-300">{hero.stats.speed}</dd>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-rose-400/80">Greed</span>
+        <dd className="font-mono tabular-nums text-slate-300">
+          {Math.round(hero.attr.greed * 100)}%
+        </dd>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
+        <img src={ICONS.gold} alt="Wealth" width={14} height={14} className="pixel size-3.5 object-contain" />
+        <dd className="font-mono tabular-nums text-amber-400">{hero.personal_wealth}g</dd>
+      </div>
+    </dl>
+  );
+}
+
+// full breakdown, reused by click-expand (2) and hover tooltip (3)
+function StatSheet({ hero }: { hero: Hero }) {
+  const wp = weaponPower(hero);
+  const rows: [string, string][] = [
+    ["Power", `${hero.stats.power}${wp > 0 ? ` +${wp}` : ""}`],
+    ["Fortitude", `${hero.stats.fortitude}/${hero.stats.max_fortitude}`],
+    ["Speed", `${hero.stats.speed}`],
+    ["Greed", `${Math.round(hero.attr.greed * 100)}%`],
+    ["Scavenge", `${hero.attr.scavenge_multiplier}×`],
+    ["Wealth", `${hero.personal_wealth}g`],
+    [
+      "Weapon",
+      hero.gear.weapon
+        ? `${hero.gear.weapon.prefix ? `${hero.gear.weapon.prefix} ` : ""}${hero.gear.weapon.name} (+${wp})`
+        : "none",
+    ],
+    ["XP", `${hero.exp}/${hero.expToNext}`],
+  ];
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+      {rows.map(([k, v]) => (
+        <div key={k} className="col-span-2 grid grid-cols-subgrid">
+          <dt className="text-slate-500">{k}</dt>
+          <dd className="text-right font-mono tabular-nums text-slate-200">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export default function RightPanel() {
   const heroes = useGuildStore((s) => s.heroes);
   const gold = useGuildStore((s) => s.ledger.gold);
@@ -23,6 +96,7 @@ export default function RightPanel() {
   const healHero = useGuildStore((s) => s.healHero);
   const activeQuests = useGuildStore((s) => s.activeQuests);
   const dungeons = useGuildStore((s) => s.dungeons);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
     <div className="flex h-full flex-col">
@@ -45,27 +119,52 @@ export default function RightPanel() {
             const questDungeon = quest
               ? dungeons.find((d) => d.id === quest.dungeonId)
               : undefined;
+            const expanded = expandedId === hero.id;
 
             return (
               <li
                 key={hero.id}
                 className="rounded-md border border-slate-800 bg-slate-800/40 p-3"
               >
-                <div className="flex items-center gap-2.5">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
-                  <img
-                    src={avatarFor(hero.id)}
-                    alt=""
-                    width={36}
-                    height={36}
-                    className="pixel size-9 shrink-0 rounded-md border border-slate-700 bg-slate-800"
-                  />
-                  <span className="truncate text-sm font-medium text-slate-100">
-                    {hero.name}
-                  </span>
-                  <span className="ml-auto shrink-0 text-xs text-slate-500">
-                    Lv {hero.level} · {hero.job}
-                  </span>
+                {/* header: click toggles full sheet (2), hover shows tooltip (3) */}
+                <div className="group relative">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedId((cur) => (cur === hero.id ? null : hero.id))
+                    }
+                    aria-expanded={expanded}
+                    aria-label={`${hero.name} stats`}
+                    className="flex w-full cursor-pointer items-center gap-2.5 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
+                    <img
+                      src={avatarFor(hero.id)}
+                      alt=""
+                      width={36}
+                      height={36}
+                      className="pixel size-9 shrink-0 rounded-md border border-slate-700 bg-slate-800"
+                    />
+                    <span className="truncate text-sm font-medium text-slate-100">
+                      {hero.name}
+                    </span>
+                    <span className="ml-auto shrink-0 text-xs text-slate-500">
+                      Lv {hero.level} · {hero.job}
+                    </span>
+                    <span
+                      className={`shrink-0 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`}
+                      aria-hidden="true"
+                    >
+                      ›
+                    </span>
+                  </button>
+
+                  {/* hover tooltip (3) — hidden while expanded to avoid double sheet */}
+                  {!expanded && (
+                    <div className="pointer-events-none absolute right-0 top-full z-50 mt-1 w-full rounded-md border border-slate-700 bg-slate-900 p-2.5 opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100">
+                      <StatSheet hero={hero} />
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-2">
@@ -113,6 +212,16 @@ export default function RightPanel() {
                     XP {hero.exp}/{hero.expToNext}
                   </p>
                 </div>
+
+                {/* always-visible compact stats (1) */}
+                <QuickStats hero={hero} />
+
+                {/* click-expanded full sheet (2) */}
+                {expanded && (
+                  <div className="mt-2 rounded-md border border-slate-700 bg-slate-900/60 p-2.5">
+                    <StatSheet hero={hero} />
+                  </div>
+                )}
 
                 {quest && questDungeon && (
                   <CountdownBar

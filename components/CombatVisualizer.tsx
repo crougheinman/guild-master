@@ -5,7 +5,6 @@ import {
   AnimatedSprite,
   Application,
   Assets,
-  Container,
   Rectangle,
   Sprite,
   Text,
@@ -14,19 +13,19 @@ import {
 } from "pixi.js";
 import {
   BACKDROP,
+  orcAnims,
   PARTICLES,
   unitAnims,
   type Clip,
   type JobAnims,
 } from "@/components/assets";
-import { JOBS, useGuildStore, type Job } from "@/store/useGuildStore";
+import { useGuildStore } from "@/store/useGuildStore";
 
-const DUEL_WIDTH = 210; // horizontal space per fight
-const FIGHT_GAP = 92; // distance between the two combatants
-const GROUND_H = 30;
+const FIGHT_GAP = 78; // distance between the two combatants in a duel
 const TURN_MS = 1500; // one full attack exchange
 const STRIKE_AT = 420; // impact moment inside the turn
 const RECOVER_AT = 750; // both back to idle
+const BACK_SCALE = 0.82; // back-row duels shrink for depth
 
 type Side = "hero" | "enemy";
 
@@ -102,19 +101,17 @@ export default function CombatVisualizer() {
         .getState()
         .heroes.filter((h) => h.status === "on_quest");
 
-      // enemy job: random but stable per hero id (visual only)
-      const enemyJobFor = (id: string): Job =>
-        JOBS[Math.abs([...id].reduce((a, c) => a * 31 + c.charCodeAt(0), 7)) % JOBS.length];
-
       const heroCfgs = fighters.map((h) => unitAnims("Blue", h.job));
-      const enemyCfgs = fighters.map((h) => unitAnims("Red", enemyJobFor(h.id)));
+      const enemyCfgs = fighters.map(() => orcAnims()); // every enemy is an Orc
 
       const urls = new Set<string>([
         BACKDROP.tilemap,
+        BACKDROP.shadow,
         ...BACKDROP.clouds,
         BACKDROP.tower,
-        BACKDROP.bush,
+        ...BACKDROP.bushes,
         ...BACKDROP.rocks,
+        ...BACKDROP.waterRocks,
         PARTICLES.dust.url,
         PARTICLES.explosion.url,
       ]);
@@ -129,7 +126,7 @@ export default function CombatVisualizer() {
       const W = host.clientWidth || 700;
       const H = Math.max(host.clientHeight, 150);
 
-      await app.init({ background: "#1a2740", width: W, height: H, antialias: false });
+      await app.init({ background: "#5a7a9a", width: W, height: H, antialias: false });
       if (cancelled) {
         app.destroy(true, { children: true });
         return;
@@ -137,46 +134,30 @@ export default function CombatVisualizer() {
       ready = true;
       host.appendChild(app.canvas);
 
-      const groundY = H - GROUND_H;
+      const horizonY = Math.round(H * 0.42); // grass field starts here
 
-      // ── backdrop: clouds → buildings → bush/rocks → ground ──
+      // ── sky: drifting clouds up top ──
       const clouds = BACKDROP.clouds.map((url, i) => {
         const c = new Sprite(loaded[url]);
         c.texture.source.scaleMode = "nearest";
-        c.alpha = 0.5;
+        c.alpha = 0.6;
         c.scale.set(0.5);
-        c.position.set(i * (W / 2), 4 + i * 12);
+        c.position.set(i * (W / 2), 4 + i * 14);
         app.stage.addChild(c);
         return c;
       });
 
+      // distant tower silhouette on the horizon
       const tower = new Sprite(loaded[BACKDROP.tower]);
       tower.texture.source.scaleMode = "nearest";
       tower.anchor.set(0.5, 1);
-      tower.scale.set((H * 0.75) / 256);
-      tower.alpha = 0.55; // pushed back
-      tower.tint = 0x8899bb;
-      tower.position.set(W - 70, groundY + 6);
+      tower.scale.set((H * 0.55) / 256);
+      tower.alpha = 0.5;
+      tower.tint = 0x7f93b8;
+      tower.position.set(W - 66, horizonY + 10);
       app.stage.addChild(tower);
 
-      const bushTex = sliceStrip(loaded[BACKDROP.bush], 8, 128)[0];
-      const bush = new Sprite(bushTex);
-      bush.anchor.set(0.5, 1);
-      bush.scale.set(0.45);
-      bush.alpha = 0.8;
-      bush.position.set(40, groundY + 10);
-      app.stage.addChild(bush);
-
-      BACKDROP.rocks.forEach((url, i) => {
-        const r = new Sprite(loaded[url]);
-        r.texture.source.scaleMode = "nearest";
-        r.anchor.set(0.5, 1);
-        r.scale.set(0.5);
-        r.alpha = 0.9;
-        r.position.set(120 + i * (W - 200), groundY + 8);
-        app.stage.addChild(r);
-      });
-
+      // ── grass field: fill from horizon to bottom ──
       const tilemap = loaded[BACKDROP.tilemap];
       tilemap.source.scaleMode = "nearest";
       const g = BACKDROP.groundTile;
@@ -184,63 +165,178 @@ export default function CombatVisualizer() {
         source: tilemap.source,
         frame: new Rectangle(g.x, g.y, g.w, g.h),
       });
-      const ground = new TilingSprite({ texture: groundTex, width: W, height: GROUND_H + 12 });
-      ground.tileScale.set((GROUND_H + 12) / g.h);
-      ground.y = groundY - 6;
+      const bandH = H - horizonY;
+      const ground = new TilingSprite({ texture: groundTex, width: W, height: bandH });
+      ground.tileScale.set(48 / g.h); // ~48px tiles across the field
+      ground.y = horizonY;
       app.stage.addChild(ground);
 
-      // ── duels ──
-      const spriteDisplay = Math.min(96, H - 54);
+      // ── natural scatter of bushes, boulders, water-rocks (behind fighters) ──
+      const rand = (min: number, max: number) => min + Math.random() * (max - min);
+      const pick = <T,>(arr: readonly T[]) =>
+        arr[Math.floor(Math.random() * arr.length)];
+      // nearer the bottom = bigger (fake depth)
+      const depthAt = (y: number) => 0.5 + ((y - horizonY) / bandH) * 0.8;
+
+      type Deco = { node: Sprite | AnimatedSprite; y: number };
+      const decos: Deco[] = [];
+
+      // bushes: dense treeline at the horizon + a few scattered deeper on the field
+      const bushRow = Math.ceil(W / 52) + 2;
+      for (let i = 0; i < bushRow; i++) {
+        const variant = pick(BACKDROP.bushes);
+        const frame = Math.floor(rand(0, BACKDROP.bushFrames));
+        const tex = sliceStrip(loaded[variant], BACKDROP.bushFrames, BACKDROP.bushSize)[frame];
+        const y = horizonY + rand(2, 14);
+        const b = new Sprite(tex);
+        b.anchor.set(0.5, 1);
+        b.scale.set(0.4 * depthAt(y));
+        b.alpha = rand(0.85, 1);
+        b.position.set(i * 52 + rand(-16, 16), y);
+        decos.push({ node: b, y });
+      }
+      for (let i = 0; i < Math.round(rand(3, 5)); i++) {
+        const variant = pick(BACKDROP.bushes);
+        const frame = Math.floor(rand(0, BACKDROP.bushFrames));
+        const tex = sliceStrip(loaded[variant], BACKDROP.bushFrames, BACKDROP.bushSize)[frame];
+        const y = rand(horizonY + bandH * 0.3, H - 6);
+        const b = new Sprite(tex);
+        b.anchor.set(0.5, 1);
+        b.scale.set(0.4 * depthAt(y) * (Math.random() < 0.5 ? -1 : 1), 0.4 * depthAt(y));
+        b.alpha = rand(0.85, 1);
+        b.position.set(rand(10, W - 10), y);
+        decos.push({ node: b, y });
+      }
+
+      // boulders scattered across the field
+      for (let i = 0; i < Math.round(rand(6, 9)); i++) {
+        const r = new Sprite(loaded[pick(BACKDROP.rocks)]);
+        r.texture.source.scaleMode = "nearest";
+        r.anchor.set(0.5, 1);
+        const y = rand(horizonY + bandH * 0.25, H - 4);
+        const s = rand(0.4, 0.62) * depthAt(y);
+        r.scale.set(Math.random() < 0.5 ? -s : s, s); // random horizontal flip
+        r.alpha = 0.96;
+        r.position.set(rand(8, W - 8), y);
+        decos.push({ node: r, y });
+      }
+
+      // a few animated water-rocks (wet stones) low on the field
+      for (let i = 0; i < Math.round(rand(2, 4)); i++) {
+        const variant = pick(BACKDROP.waterRocks);
+        const frames = sliceStrip(loaded[variant], BACKDROP.waterRockFrames, BACKDROP.waterRockSize);
+        const wr = new AnimatedSprite(frames);
+        wr.anchor.set(0.5, 1);
+        const y = rand(horizonY + bandH * 0.55, H - 4);
+        const s = rand(0.45, 0.65) * depthAt(y);
+        wr.scale.set(s);
+        wr.alpha = 0.95;
+        wr.position.set(rand(12, W - 12), y);
+        wr.animationSpeed = 0.12;
+        wr.gotoAndPlay(Math.floor(rand(0, BACKDROP.waterRockFrames))); // desync ripples
+        decos.push({ node: wr, y });
+      }
+
+      // paint back-to-front so nearer decorations overlap farther ones
+      for (const d of decos.sort((a, b) => a.y - b.y)) app.stage.addChild(d.node);
+
+      // ── duels, staggered front↔back for depth ──
+      const shadowTex = loaded[BACKDROP.shadow];
+      shadowTex.source.scaleMode = "nearest";
       const dustFrames = sliceClip(loaded, { url: PARTICLES.dust.url, frames: PARTICLES.dust.frames }, PARTICLES.dust.size);
       const explosionFrames = sliceClip(loaded, { url: PARTICLES.explosion.url, frames: PARTICLES.explosion.frames }, PARTICLES.explosion.size);
 
-      const makeFighter = (anims: LoadedAnims, cfg: JobAnims, x: number, mirror: boolean) => {
+      const n = fighters.length;
+      // one shared unit height so hero + orc read at consistent scale
+      const baseUnit = Math.min(104, bandH * 0.72);
+
+      const makeShadow = (x: number, y: number, w: number) => {
+        const sh = new Sprite(shadowTex);
+        sh.anchor.set(0.5, 0.5);
+        sh.scale.set(w / 192, w / 192 / 2.6); // flattened ellipse
+        sh.alpha = 0.4;
+        sh.position.set(x, y);
+        return sh;
+      };
+
+      const makeFighter = (
+        anims: LoadedAnims,
+        cfg: JobAnims,
+        x: number,
+        feetY: number,
+        sc: number,
+        mirror: boolean,
+      ) => {
         const s = new AnimatedSprite(anims.idle);
         s.anchor.set(0.5, 1);
-        const sc = spriteDisplay / cfg.size;
         s.scale.set(mirror ? -sc : sc, sc);
-        s.position.set(x, groundY + 10); // feet on grass
+        s.position.set(x, feetY);
         play(s, anims.idle, { loop: true, speed: 0.12 });
-        app.stage.addChild(s);
         return s;
       };
 
       const duels = fighters.map((hero, i) => {
-        const baseX = 30 + i * DUEL_WIDTH;
-        const heroAnims = loadAnimSet(loaded, heroCfgs[i]);
-        const enemyAnims = loadAnimSet(loaded, enemyCfgs[i]);
+        const back = n > 1 && i % 2 === 1; // alternate rows
+        const depthScale = back ? BACK_SCALE : 1;
+        // front row lower in the band, back row higher (further away)
+        const feetY = back
+          ? horizonY + bandH * 0.42
+          : horizonY + bandH * 0.82;
 
-        const heroSprite = makeFighter(heroAnims, heroCfgs[i], baseX + 40, false);
-        const enemySprite = makeFighter(enemyAnims, enemyCfgs[i], baseX + 40 + FIGHT_GAP, true);
+        // spread duels across the width; back row nudged toward center
+        const slot = (i + 0.5) / n;
+        const cx = W * (back ? 0.25 + slot * 0.5 : slot);
+        const gap = FIGHT_GAP * depthScale;
+        const heroX = cx - gap / 2;
+        const enemyX = cx + gap / 2;
+
+        const heroCfg = heroCfgs[i];
+        const enemyCfg = enemyCfgs[i];
+        const heroAnims = loadAnimSet(loaded, heroCfg);
+        const enemyAnims = loadAnimSet(loaded, enemyCfg);
+        const heroSc = (baseUnit / heroCfg.size) * depthScale;
+        const enemySc = (baseUnit / enemyCfg.size) * depthScale;
+
+        const heroShadow = makeShadow(heroX, feetY, baseUnit * 0.5 * depthScale);
+        const enemyShadow = makeShadow(enemyX, feetY, baseUnit * 0.5 * depthScale);
+        const heroSprite = makeFighter(heroAnims, heroCfg, heroX, feetY, heroSc, false);
+        const enemySprite = makeFighter(enemyAnims, enemyCfg, enemyX, feetY, enemySc, true);
 
         const label = new Text({
           text: `${hero.name} · ${hero.job}`,
-          style: { fill: 0xe2e8f0, fontSize: 11, fontFamily: "monospace" },
+          style: { fill: 0xe2e8f0, fontSize: back ? 9 : 11, fontFamily: "monospace" },
         });
-        label.anchor.set(0.5, 0);
-        label.position.set(baseX + 40 + FIGHT_GAP / 2, 2);
-        app.stage.addChild(label);
+        label.anchor.set(0.5, 1);
+        label.position.set(cx, feetY - baseUnit * depthScale - 4);
 
         return {
+          feetY,
+          depthScale,
+          nodes: [heroShadow, enemyShadow, heroSprite, enemySprite, label],
           heroSprite,
           enemySprite,
           heroAnims,
           enemyAnims,
-          heroX: baseX + 40,
-          enemyX: baseX + 40 + FIGHT_GAP,
+          heroX,
+          enemyX,
           attacker: (Math.random() < 0.5 ? "hero" : "enemy") as Side,
           attackClip: 0,
-          turnStart: performance.now() + i * 300, // stagger duels
+          turnStart: performance.now() + i * 300, // stagger starts
           struck: false,
         };
       });
 
-      const spawnParticle = (x: number, y: number) => {
+      // add nodes back-to-front so nearer duels overlap farther ones
+      for (const d of [...duels].sort((a, b) => a.feetY - b.feetY)) {
+        for (const node of d.nodes) app.stage.addChild(node);
+      }
+
+      const spawnParticle = (x: number, y: number, scale: number) => {
         const big = Math.random() < 0.25;
         const frames = big ? explosionFrames : dustFrames;
         const p = new AnimatedSprite(frames);
         p.anchor.set(0.5, big ? 0.7 : 1);
-        p.scale.set(big ? spriteDisplay / 256 : 0.9);
+        p.scale.set((big ? baseUnit / 256 : 0.9) * scale);
         p.position.set(x, y);
         p.loop = false;
         p.animationSpeed = 0.35;
@@ -277,14 +373,14 @@ export default function CombatVisualizer() {
             play(attacker, clip, { loop: false, speed: clip.length / 36 });
             play(defender, dAnims.guard ?? dAnims.idle, { loop: true, speed: 0.2 });
 
-            // lunge toward the defender and back
+            // lunge toward the defender and back (scaled by depth)
             const lunge = Math.sin(Math.min(1, t / RECOVER_AT) * Math.PI);
-            attacker.x = aHome + dir * lunge * 22;
+            attacker.x = aHome + dir * lunge * 22 * d.depthScale;
 
             if (!d.struck && t >= STRIKE_AT) {
               d.struck = true;
-              spawnParticle(dHome - dir * 8, groundY + 8);
-              defender.x = dHome + dir * 5; // knockback
+              spawnParticle(dHome - dir * 8 * d.depthScale, d.feetY - 6, d.depthScale);
+              defender.x = dHome + dir * 5 * d.depthScale; // knockback
             }
           } else if (t < TURN_MS) {
             // recover: both idle, positions restored
