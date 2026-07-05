@@ -6,6 +6,7 @@ import CombatVisualizer from "@/components/CombatVisualizer";
 import Dungeons from "@/components/Dungeons";
 import Forge from "@/components/Forge";
 import GameTicker from "@/components/GameTicker";
+import { MobileChatOverlay } from "@/components/HeroChatBubble";
 import Market from "@/components/Market";
 import RightPanel from "@/components/RightPanel";
 import Settings from "@/components/Settings";
@@ -64,6 +65,7 @@ export default function Dashboard() {
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-slate-950 text-slate-200 md:grid md:grid-cols-[20%_55%_25%]">
       <GameTicker />
+      {hydrated && <MobileChatOverlay />}
 
       {/* ── Mobile top bar: treasury always visible + settings gear ── */}
       <header className="flex shrink-0 items-center gap-3 border-b border-slate-800 bg-slate-900 px-3 py-2 md:hidden">

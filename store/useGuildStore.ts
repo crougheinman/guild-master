@@ -137,6 +137,15 @@ export interface FloatingText {
   color: string; // tailwind text class
 }
 
+export interface HeroChat {
+  id: string;
+  heroId: string;
+  heroName: string;
+  text: string;
+  type: "roster" | "combat";
+  expiresAt: number;
+}
+
 // ---------- Store ----------
 
 interface GuildState {
@@ -148,6 +157,7 @@ interface GuildState {
   inventory: Item[];
   eventLog: LogEntry[];
   floatingTexts: FloatingText[]; // ephemeral UI juice, not persisted
+  activeChats: HeroChat[]; // ephemeral hero chatter, not persisted
   upgrades: string[]; // purchased upgrade ids
   marketRates: MarketRates;
 
@@ -160,6 +170,12 @@ interface GuildState {
   craftItem: (subType: SubType) => void;
   heroBuyItem: (itemId: string) => boolean;
   removeFloatingText: (id: string) => void;
+  triggerHeroChat: (
+    heroId: string,
+    text: string,
+    type: "roster" | "combat",
+    durationMs?: number,
+  ) => void;
   retireHero: (heroId: string) => void;
   buyUpgrade: (upgradeId: string, cost: { gold: number; reputation: number }) => void;
   rollMarket: () => void;
@@ -356,6 +372,7 @@ type GuildData = Pick<
   | "inventory"
   | "eventLog"
   | "floatingTexts"
+  | "activeChats"
 >;
 
 // fresh defaults each call — shared by store creation and wipeSave
@@ -416,6 +433,7 @@ const initialState = (): GuildData => ({
   inventory: [],
   eventLog: [],
   floatingTexts: [],
+  activeChats: [],
 });
 
 export const useGuildStore = create<GuildState>()(
@@ -426,7 +444,10 @@ export const useGuildStore = create<GuildState>()(
       exportSave: () => {
         const data = Object.fromEntries(
           Object.entries(get()).filter(
-            ([k, v]) => typeof v !== "function" && k !== "floatingTexts",
+            ([k, v]) =>
+              typeof v !== "function" &&
+              k !== "floatingTexts" &&
+              k !== "activeChats",
           ),
         );
         // UTF-8-safe base64: btoa alone throws on chars >255 (logs contain ×, —)
@@ -446,7 +467,7 @@ export const useGuildStore = create<GuildState>()(
             !Array.isArray(parsed.heroes)
           )
             return false;
-          set({ ...parsed, floatingTexts: [] });
+          set({ ...parsed, floatingTexts: [], activeChats: [] });
           return true;
         } catch {
           return false;
@@ -459,6 +480,29 @@ export const useGuildStore = create<GuildState>()(
 
       removeFloatingText: (id) => {
         set({ floatingTexts: get().floatingTexts.filter((f) => f.id !== id) });
+      },
+
+      triggerHeroChat: (heroId, text, type, durationMs = 3000) => {
+        const hero = get().heroes.find((h) => h.id === heroId);
+        if (!hero) return;
+
+        const id = `chat-${Date.now()}-${heroSeq++}`;
+        set({
+          activeChats: [
+            ...get().activeChats,
+            {
+              id,
+              heroId,
+              heroName: hero.name,
+              text,
+              type,
+              expiresAt: Date.now() + durationMs,
+            },
+          ],
+        });
+        setTimeout(() => {
+          set({ activeChats: get().activeChats.filter((c) => c.id !== id) });
+        }, durationMs);
       },
 
       retireHero: (heroId) => {
@@ -611,7 +655,20 @@ export const useGuildStore = create<GuildState>()(
           slot = targetSlotFor(h);
           return slot !== null;
         });
-        if (!buyer || !slot) return false;
+        if (!buyer || !slot) {
+          // nobody bites — a random hero explains why
+          if (heroes.length > 0) {
+            const grump = heroes[randInt([0, heroes.length - 1])];
+            get().triggerHeroChat(
+              grump.id,
+              grump.personal_wealth < item.price
+                ? "Sorry, I'm broke!"
+                : "I don't need that!",
+              "roster",
+            );
+          }
+          return false;
+        }
 
         const paid = priceFor(buyer);
         set({
@@ -654,6 +711,11 @@ export const useGuildStore = create<GuildState>()(
           tavernCandidates: tavernCandidates.filter((c) => c.id !== candidateId),
         });
         addLog(`${candidate.name} joined the guild for ${HIRE_COST}g.`);
+        // an old-timer welcomes the recruit
+        if (heroes.length > 0) {
+          const greeter = heroes[randInt([0, heroes.length - 1])];
+          get().triggerHeroChat(greeter.id, "Yo, welcome to the guild!!!", "roster");
+        }
       },
 
       addLog: (message) => {
@@ -726,6 +788,7 @@ export const useGuildStore = create<GuildState>()(
         let ledger = state.ledger;
         const newLogs: LogEntry[] = [];
         const newFloats: FloatingText[] = [];
+        const reactions: { heroId: string; text: string }[] = [];
 
         for (const quest of finished) {
           const hero = heroes.find((h) => h.id === quest.heroId);
@@ -823,6 +886,14 @@ export const useGuildStore = create<GuildState>()(
           };
           heroes = heroes.map((h) => (h.id === hero.id ? updated : h));
           for (const l of lvlLogs) newLogs.push(makeLog(l));
+
+          // post-quest chatter
+          if (updated.stats.fortitude < totalStats(updated).maxFortitude * 0.2) {
+            reactions.push({ heroId: hero.id, text: "Oh no, I'm dying..." });
+          } else if (success && updated.stats.fortitude >= hero.stats.fortitude) {
+            // triumph: took no net damage
+            reactions.push({ heroId: hero.id, text: "I can do this all day!" });
+          }
         }
 
         set({
@@ -834,6 +905,7 @@ export const useGuildStore = create<GuildState>()(
           eventLog: [...newLogs, ...state.eventLog].slice(0, MAX_LOG_ENTRIES),
           floatingTexts: [...state.floatingTexts, ...newFloats],
         });
+        for (const r of reactions) get().triggerHeroChat(r.heroId, r.text, "combat");
       },
     }),
     {
@@ -842,10 +914,12 @@ export const useGuildStore = create<GuildState>()(
       version: 7,
       // stale save → intentional reset to defaults (merge fills everything)
       migrate: () => ({}) as GuildState,
-      // floatingTexts is ephemeral juice — never write it to localStorage
+      // floatingTexts/activeChats are ephemeral juice — never write to localStorage
       partialize: (state) =>
         Object.fromEntries(
-          Object.entries(state).filter(([k]) => k !== "floatingTexts"),
+          Object.entries(state).filter(
+            ([k]) => k !== "floatingTexts" && k !== "activeChats",
+          ),
         ) as GuildState,
     },
   ),

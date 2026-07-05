@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { avatarFor, ICONS } from "@/components/assets";
 import CountdownBar from "@/components/CountdownBar";
+import { RosterChatBubble } from "@/components/HeroChatBubble";
 import { RARITY_BG, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 import {
@@ -165,6 +166,7 @@ export default function RightPanel() {
                 key={hero.id}
                 className="relative rounded-md border border-slate-800 bg-slate-800/40 p-3"
               >
+                <RosterChatBubble heroId={hero.id} />
                 {/* floating quest-result text, drifts up and fades */}
                 {floatingTexts
                   .filter((f) => f.heroId === hero.id)
