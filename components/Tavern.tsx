@@ -56,7 +56,9 @@ export default function Tavern() {
                 />
                 <div className="min-w-0">
                   <h3 className="truncate font-medium text-slate-100">{c.name}</h3>
-                  <span className="text-xs text-slate-500">Lv {c.level}</span>
+                  <span className="text-xs text-slate-500">
+                    Lv {c.level} · {c.job}
+                  </span>
                 </div>
               </div>
 

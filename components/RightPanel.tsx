@@ -64,7 +64,7 @@ export default function RightPanel() {
                     {hero.name}
                   </span>
                   <span className="ml-auto shrink-0 text-xs text-slate-500">
-                    Lv {hero.level}
+                    Lv {hero.level} · {hero.job}
                   </span>
                 </div>
 
@@ -90,6 +90,28 @@ export default function RightPanel() {
                       {status.text}
                     </span>
                   </div>
+                </div>
+
+                {/* EXP toward next level */}
+                <div className="mt-1.5">
+                  <div
+                    role="meter"
+                    aria-label={`${hero.name} experience`}
+                    aria-valuenow={hero.exp}
+                    aria-valuemin={0}
+                    aria-valuemax={hero.expToNext}
+                    className="h-1 overflow-hidden rounded-full bg-slate-700/70"
+                  >
+                    <div
+                      className="h-full rounded-full bg-violet-500 transition-[width] duration-300"
+                      style={{
+                        width: `${Math.min(100, (hero.exp / hero.expToNext) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-0.5 text-right font-mono text-[10px] tabular-nums text-slate-500">
+                    XP {hero.exp}/{hero.expToNext}
+                  </p>
                 </div>
 
                 {quest && questDungeon && (

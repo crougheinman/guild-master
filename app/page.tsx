@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ICONS } from "@/components/assets";
+import CombatVisualizer from "@/components/CombatVisualizer";
 import Dungeons from "@/components/Dungeons";
 import Forge from "@/components/Forge";
 import GameTicker from "@/components/GameTicker";
@@ -112,12 +113,9 @@ export default function Dashboard() {
 
       {/* ── Center: Main Stage ── */}
       <main className="flex flex-col overflow-y-auto">
-        {/* reserved for PixiJS combat visualizer — idle warrior stands guard meanwhile */}
-        <div className="relative flex h-[15%] shrink-0 items-center justify-center overflow-hidden border-b border-slate-800 bg-slate-900/50">
-          <div className="sprite-idle absolute bottom-[-48px] origin-bottom scale-75" aria-hidden="true" />
-          <span className="absolute bottom-1 right-2 text-[10px] uppercase tracking-widest text-slate-700">
-            Combat Visualizer — coming soon
-          </span>
+        {/* permanent combat stage — live PixiJS duels while heroes quest */}
+        <div className="h-[22%] min-h-[150px] shrink-0 border-b border-slate-800 bg-slate-900/50">
+          {hydrated && <CombatVisualizer />}
         </div>
         <div className="flex-1 overflow-y-auto">
           {!hydrated ? null : activeTab === "tavern" ? (

@@ -19,6 +19,9 @@ export interface HeroAttr {
 
 export type HeroStatus = "idle" | "on_quest" | "injured";
 
+export type Job = "Archer" | "Lancer" | "Monk" | "Pawn" | "Warrior";
+export const JOBS: Job[] = ["Archer", "Lancer", "Monk", "Pawn", "Warrior"];
+
 export type GearSlot = "weapon" | "armor" | "trinket";
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
@@ -37,9 +40,13 @@ export interface Item {
 export interface Hero {
   id: string;
   name: string;
+  job: Job;
   level: number;
+  exp: number;
+  expToNext: number;
+  // note: currentFortitude/maxFortitude live on stats as fortitude/max_fortitude
   stats: HeroStats;
-  attr: HeroAttr;
+  attr: HeroAttr; // greed is a 0..1 fraction — Ego Tax adds 0.02, caps at 0.80
   traits: string[];
   status: HeroStatus;
   personal_wealth: number;
@@ -99,6 +106,42 @@ interface GuildState {
 }
 
 const QUEST_FATIGUE = 10; // fortitude lost on a successful run
+const GREED_CAP = 0.8; // Ego Tax ceiling (80%)
+
+// Add exp and run the level-up loop. Pure — returns a new hero + any level
+// logs. Each level: +power, +maxFortitude, full heal, +2% greed (Ego Tax).
+const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => {
+  let { level, exp, expToNext } = hero;
+  let { power, max_fortitude, fortitude } = hero.stats;
+  let greed = hero.attr.greed;
+  const logs: string[] = [];
+
+  exp += amount;
+  while (exp >= expToNext) {
+    exp -= expToNext;
+    level += 1;
+    expToNext = Math.floor(Math.pow(level, 2) * 100);
+    power += randInt([2, 4]);
+    max_fortitude += randInt([10, 20]);
+    fortitude = max_fortitude; // fully restore
+    greed = Math.min(GREED_CAP, greed + 0.02);
+    logs.push(
+      `${hero.name} leveled up to ${level}! Greed increased to ${Math.round(greed * 100)}%`,
+    );
+  }
+
+  return {
+    hero: {
+      ...hero,
+      level,
+      exp,
+      expToNext,
+      stats: { ...hero.stats, power, max_fortitude, fortitude },
+      attr: { ...hero.attr, greed },
+    },
+    logs,
+  };
+};
 const MAX_LOG_ENTRIES = 50;
 export const HEAL_COST = 50;
 export const HIRE_COST = 100;
@@ -127,7 +170,10 @@ const rollCandidate = (): Hero => {
   return {
     id: `hero-${Date.now()}-${heroSeq++}`,
     name: CANDIDATE_NAMES[randInt([0, CANDIDATE_NAMES.length - 1])],
+    job: JOBS[randInt([0, JOBS.length - 1])],
     level: 1,
+    exp: 0,
+    expToNext: 100,
     stats: {
       power: randInt([5, 15]),
       fortitude,
@@ -168,7 +214,10 @@ export const useGuildStore = create<GuildState>()(
         {
           id: "hero-1",
           name: "Brakka",
+          job: "Warrior",
           level: 1,
+          exp: 0,
+          expToNext: 100,
           stats: { power: 10, fortitude: 50, max_fortitude: 50, speed: 1 },
           attr: { greed: 0.1, scavenge_multiplier: 1 },
           traits: [],
@@ -383,6 +432,13 @@ export const useGuildStore = create<GuildState>()(
           const successChance = (effectivePower / dungeon.threat_level) * 100;
           const success = Math.random() * 100 < successChance;
 
+          // exp scales with threat × duration-in-minutes; 100% on win, 25% on loss
+          const baseExp = Math.floor(
+            dungeon.threat_level * (dungeon.base_duration_ms / 60000),
+          );
+
+          // base hero after quest outcome (stats/wealth), pre-progression
+          let base: Hero;
           if (success) {
             const rawGold = Math.round(
               randInt(dungeon.loot_table.gold) * hero.attr.scavenge_multiplier,
@@ -399,41 +455,40 @@ export const useGuildStore = create<GuildState>()(
               );
             }
 
-            // success still fatigues; drained heroes must rest
-            const fortitude = Math.max(0, hero.stats.fortitude - QUEST_FATIGUE);
             ledger = { gold: ledger.gold + guildGold, materials };
-            heroes = heroes.map((h) =>
-              h.id === hero.id
-                ? {
-                    ...h,
-                    status: (fortitude === 0 ? "injured" : "idle") as HeroStatus,
-                    personal_wealth: h.personal_wealth + heroCut,
-                    stats: { ...h.stats, fortitude },
-                  }
-                : h,
-            );
+            base = {
+              ...hero,
+              personal_wealth: hero.personal_wealth + heroCut,
+              // success still fatigues
+              stats: {
+                ...hero.stats,
+                fortitude: Math.max(0, hero.stats.fortitude - QUEST_FATIGUE),
+              },
+            };
             newLogs.push(
               makeLog(
                 `${hero.name} cleared ${dungeon.name}! Earned ${guildGold}g (+${heroCut}g pocketed).`,
               ),
             );
           } else {
-            // failure wipes fortitude — hero needs healing before next run
-            heroes = heroes.map((h) =>
-              h.id === hero.id
-                ? {
-                    ...h,
-                    status: "injured" as const,
-                    stats: { ...h.stats, fortitude: 0 },
-                  }
-                : h,
-            );
+            // failure wipes fortitude
+            base = { ...hero, stats: { ...hero.stats, fortitude: 0 } };
             newLogs.push(
               makeLog(
                 `${hero.name} failed ${dungeon.name} and was severely injured!`,
               ),
             );
           }
+
+          // level-up may fully restore fortitude, reviving an injured hero
+          const earnedExp = success ? baseExp : Math.floor(baseExp * 0.25);
+          const { hero: leveled, logs: lvlLogs } = gainExp(base, earnedExp);
+          const updated: Hero = {
+            ...leveled,
+            status: leveled.stats.fortitude === 0 ? "injured" : "idle",
+          };
+          heroes = heroes.map((h) => (h.id === hero.id ? updated : h));
+          for (const l of lvlLogs) newLogs.push(makeLog(l));
         }
 
         set({
@@ -449,7 +504,9 @@ export const useGuildStore = create<GuildState>()(
     {
       name: "guild-master-storage",
       // ponytail: version bump discards old dev saves; write real migrations post-launch
-      version: 3,
+      version: 5,
+      // stale save → intentional reset to defaults (merge fills everything)
+      migrate: () => ({}) as GuildState,
     },
   ),
 );
