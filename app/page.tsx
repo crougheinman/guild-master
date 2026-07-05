@@ -8,16 +8,20 @@ import Forge from "@/components/Forge";
 import GameTicker from "@/components/GameTicker";
 import Market from "@/components/Market";
 import RightPanel from "@/components/RightPanel";
+import Settings from "@/components/Settings";
 import Tavern from "@/components/Tavern";
+import Upgrades from "@/components/Upgrades";
 import { useGuildStore, type MaterialKey } from "@/store/useGuildStore";
 
-type Tab = "tavern" | "dungeons" | "forge" | "market";
+type Tab = "tavern" | "dungeons" | "forge" | "market" | "guild" | "settings";
 
 const NAV_TABS: { id: Tab; label: string }[] = [
   { id: "tavern", label: "Tavern" },
   { id: "dungeons", label: "Dungeons" },
   { id: "forge", label: "Forge" },
   { id: "market", label: "Market" },
+  { id: "guild", label: "Guild Hall" },
+  { id: "settings", label: "Settings" },
 ];
 
 const RESOURCES: {
@@ -124,8 +128,12 @@ export default function Dashboard() {
             <Dungeons />
           ) : activeTab === "forge" ? (
             <Forge />
-          ) : (
+          ) : activeTab === "market" ? (
             <Market />
+          ) : activeTab === "guild" ? (
+            <Upgrades />
+          ) : (
+            <Settings />
           )}
         </div>
       </main>

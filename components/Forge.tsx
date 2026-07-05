@@ -1,24 +1,43 @@
 "use client";
 
-import { DAGGER_COST, useGuildStore, type Rarity } from "@/store/useGuildStore";
+import { useState } from "react";
+import { motion } from "framer-motion";
+import {
+  RECIPES,
+  useGuildStore,
+  type MaterialKey,
+  type SubType,
+} from "@/store/useGuildStore";
 import { ICONS } from "@/components/assets";
+import { RARITY_STYLE, rarityBlurb, statLine } from "@/components/rarity";
+import Tooltip from "@/components/Tooltip";
 
-const RARITY_STYLE: Record<Rarity, string> = {
-  common: "text-gray-400 border-slate-700",
-  uncommon: "text-green-400 border-green-500/30",
-  rare: "text-blue-400 border-blue-500/30",
-  epic: "text-purple-400 border-purple-500/30",
-  legendary: "text-yellow-400 border-yellow-500/40",
+const LEGENDARY_GLOW = {
+  boxShadow: [
+    "0 0 4px 0 rgba(250, 204, 21, 0.2)",
+    "0 0 14px 2px rgba(250, 204, 21, 0.45)",
+    "0 0 4px 0 rgba(250, 204, 21, 0.2)",
+  ],
 };
+
+const MAT_ICON: Record<MaterialKey, string> = {
+  organics: ICONS.organics,
+  minerals: ICONS.minerals,
+  botanicals: ICONS.botanicals,
+};
+
+const SUBTYPES = Object.keys(RECIPES) as SubType[];
 
 export default function Forge() {
   const materials = useGuildStore((s) => s.ledger.materials);
   const inventory = useGuildStore((s) => s.inventory);
-  const craftDagger = useGuildStore((s) => s.craftDagger);
+  const craftItem = useGuildStore((s) => s.craftItem);
+  const [selected, setSelected] = useState<SubType>("sword");
 
-  const canCraft =
-    materials.organics >= DAGGER_COST.organics &&
-    materials.minerals >= DAGGER_COST.minerals;
+  const recipe = RECIPES[selected];
+  const canCraft = (Object.entries(recipe.cost) as [MaterialKey, number][]).every(
+    ([mat, need]) => materials[mat] >= need,
+  );
 
   return (
     <div className="p-4">
@@ -30,35 +49,61 @@ export default function Forge() {
 
       {/* ── Crafting ── */}
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-        <div className="flex flex-wrap items-center gap-4">
+        {/* recipe picker */}
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Recipe">
+          {SUBTYPES.map((st) => {
+            const active = st === selected;
+            return (
+              <button
+                key={st}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setSelected(st)}
+                className={`min-h-9 cursor-pointer rounded-md border px-3 text-xs font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
+                  active
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                    : "border-slate-700 text-slate-400 hover:bg-slate-800"
+                }`}
+              >
+                {st}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-4 text-sm">
-            <span className="flex items-center gap-1.5">
-              {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
-              <img src={ICONS.organics} alt="Organics" width={18} height={18} className="pixel size-[18px] object-contain" />
-              <span className={`font-mono tabular-nums ${materials.organics >= DAGGER_COST.organics ? "text-slate-200" : "text-rose-400"}`}>
-                {materials.organics}/{DAGGER_COST.organics}
-              </span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
-              <img src={ICONS.minerals} alt="Minerals" width={18} height={18} className="pixel size-[18px] object-contain" />
-              <span className={`font-mono tabular-nums ${materials.minerals >= DAGGER_COST.minerals ? "text-slate-200" : "text-rose-400"}`}>
-                {materials.minerals}/{DAGGER_COST.minerals}
-              </span>
-            </span>
+            {(Object.entries(recipe.cost) as [MaterialKey, number][]).map(
+              ([mat, need]) => (
+                <span key={mat} className="flex items-center gap-1.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
+                  <img src={MAT_ICON[mat]} alt={mat} width={18} height={18} className="pixel size-[18px] object-contain" />
+                  <span
+                    className={`font-mono tabular-nums ${materials[mat] >= need ? "text-slate-200" : "text-rose-400"}`}
+                  >
+                    {materials[mat]}/{need}
+                  </span>
+                </span>
+              ),
+            )}
           </div>
           <button
             type="button"
-            onClick={craftDagger}
+            onClick={() => craftItem(selected)}
             disabled={!canCraft}
-            title={canCraft ? undefined : `Need ${DAGGER_COST.organics} organics + ${DAGGER_COST.minerals} minerals`}
-            className="min-h-10 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+            title={canCraft ? undefined : "Not enough materials"}
+            className="min-h-10 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium capitalize text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Craft Dagger
+            Craft {selected}
           </button>
         </div>
+
         <p className="mt-2 text-xs text-slate-500">
-          60% Common · 25% Uncommon · 10% Rare · 4% Epic · 1% Legendary
+          {recipe.slot} slot · 60% Common · 25% Uncommon · 10% Rare · 4% Epic ·
+          1% Legendary
+          {recipe.slot === "accessory" &&
+            " · may roll a rule-bending artifact effect"}
         </p>
       </section>
 
@@ -74,19 +119,40 @@ export default function Forge() {
         ) : (
           <ul className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4">
             {inventory.map((item) => (
-              <li
+              <motion.li
                 key={item.id}
-                className={`rounded-md border bg-slate-900 p-3 ${RARITY_STYLE[item.rarity]}`}
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{
+                  scale: 1,
+                  opacity: 1,
+                  ...(item.rarity === "legendary" ? LEGENDARY_GLOW : {}),
+                }}
+                transition={{
+                  duration: 0.25,
+                  ...(item.rarity === "legendary"
+                    ? { boxShadow: { duration: 1.8, repeat: Infinity } }
+                    : {}),
+                }}
+                className={`rounded-md border bg-slate-900 ${RARITY_STYLE[item.rarity]}`}
               >
-                <p className="truncate text-sm font-medium">
-                  {item.prefix ? `${item.prefix} ` : ""}
-                  {item.name}
-                </p>
-                <p className="mt-1 text-xs capitalize opacity-75">{item.rarity}</p>
-                <p className="mt-1 font-mono text-xs tabular-nums text-slate-300">
-                  Power +{item.base_stats.power}
-                </p>
-              </li>
+                <Tooltip text={rarityBlurb(item)}>
+                  <div className="p-3">
+                    <p className="truncate text-sm font-medium">
+                      {item.prefix ? `${item.prefix} ` : ""}
+                      {item.name}
+                    </p>
+                    <p className="mt-1 text-xs capitalize opacity-75">
+                      {item.rarity} {item.subType}
+                    </p>
+                    <p className="mt-1 font-mono text-xs tabular-nums text-slate-300">
+                      {statLine(item)}
+                    </p>
+                    {item.specialEffect && (
+                      <p className="mt-0.5 text-xs text-fuchsia-400">✦ artifact</p>
+                    )}
+                  </div>
+                </Tooltip>
+              </motion.li>
             ))}
           </ul>
         )}

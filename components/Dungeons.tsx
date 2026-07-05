@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { DUNGEON_ART } from "@/components/assets";
-import { useGuildStore, type Dungeon, type Hero } from "@/store/useGuildStore";
+import {
+  totalStats,
+  useGuildStore,
+  type Dungeon,
+  type Hero,
+} from "@/store/useGuildStore";
 
 const formatDuration = (ms: number) =>
   ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
@@ -75,7 +80,7 @@ function DungeonCard({
             </option>
             {idleHeroes.map((h) => (
               <option key={h.id} value={h.id}>
-                {h.name} (Pow {h.stats.power}, Spd {h.stats.speed})
+                {h.name} (Pow {totalStats(h).power}, Spd {totalStats(h).speed})
               </option>
             ))}
           </select>

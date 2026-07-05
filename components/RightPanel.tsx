@@ -1,10 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { avatarFor, ICONS } from "@/components/assets";
 import CountdownBar from "@/components/CountdownBar";
+import { RARITY_BG, rarityBlurb, statLine } from "@/components/rarity";
+import Tooltip from "@/components/Tooltip";
 import {
+  GEAR_SLOTS,
   HEAL_COST,
+  RETIRE_REP_PER_LEVEL,
+  totalStats,
   useGuildStore,
   type Hero,
   type HeroStatus,
@@ -22,11 +28,10 @@ function hpBarColor(pct: number) {
   return "bg-rose-500";
 }
 
-const weaponPower = (h: Hero) => h.gear.weapon?.base_stats.power ?? 0;
-
-// compact always-visible stat strip (1)
+// compact always-visible stat strip (1) — totals include gear
 function QuickStats({ hero }: { hero: Hero }) {
-  const wp = weaponPower(hero);
+  const t = totalStats(hero);
+  const powerBonus = t.power - hero.stats.power;
   return (
     <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
       <div className="flex items-center gap-1.5">
@@ -35,14 +40,19 @@ function QuickStats({ hero }: { hero: Hero }) {
         <dt className="sr-only">Power</dt>
         <dd className="font-mono tabular-nums text-slate-300">
           {hero.stats.power}
-          {wp > 0 && <span className="text-emerald-400"> +{wp}</span>}
+          {powerBonus !== 0 && (
+            <span className={powerBonus > 0 ? "text-emerald-400" : "text-rose-400"}>
+              {" "}
+              {powerBonus > 0 ? `+${powerBonus}` : powerBonus}
+            </span>
+          )}
         </dd>
       </div>
       <div className="flex items-center gap-1.5">
         {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
         <img src={ICONS.speed} alt="Speed" width={14} height={14} className="pixel size-3.5 object-contain" />
         <dt className="sr-only">Speed</dt>
-        <dd className="font-mono tabular-nums text-slate-300">{hero.stats.speed}</dd>
+        <dd className="font-mono tabular-nums text-slate-300">{t.speed}</dd>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="text-rose-400/80">Greed</span>
@@ -59,22 +69,47 @@ function QuickStats({ hero }: { hero: Hero }) {
   );
 }
 
+// 5 gear-slot squares, rarity-tinted, tooltip per item
+function GearSlots({ hero }: { hero: Hero }) {
+  return (
+    <div className="mt-2 flex gap-1.5" aria-label="Equipped gear">
+      {GEAR_SLOTS.map((slot) => {
+        const item = hero.gear[slot];
+        return (
+          <Tooltip
+            key={slot}
+            text={
+              item
+                ? `${item.prefix ? `${item.prefix} ` : ""}${item.name} — ${statLine(item)}. ${rarityBlurb(item)}`
+                : `${slot}: empty`
+            }
+          >
+            <span
+              className={`block size-4 rounded-sm border ${
+                item
+                  ? `${RARITY_BG[item.rarity]} border-slate-950/40`
+                  : "border-slate-700 bg-slate-800/60"
+              }`}
+            />
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
 // full breakdown, reused by click-expand (2) and hover tooltip (3)
 function StatSheet({ hero }: { hero: Hero }) {
-  const wp = weaponPower(hero);
+  const t = totalStats(hero);
+  const equipped = GEAR_SLOTS.filter((s) => hero.gear[s]).length;
   const rows: [string, string][] = [
-    ["Power", `${hero.stats.power}${wp > 0 ? ` +${wp}` : ""}`],
-    ["Fortitude", `${hero.stats.fortitude}/${hero.stats.max_fortitude}`],
-    ["Speed", `${hero.stats.speed}`],
+    ["Power", `${t.power}${t.power !== hero.stats.power ? ` (base ${hero.stats.power})` : ""}`],
+    ["Fortitude", `${hero.stats.fortitude}/${t.maxFortitude}`],
+    ["Speed", `${t.speed}`],
     ["Greed", `${Math.round(hero.attr.greed * 100)}%`],
-    ["Scavenge", `${hero.attr.scavenge_multiplier}×`],
+    ["Scavenge", `${t.scavenge}×`],
     ["Wealth", `${hero.personal_wealth}g`],
-    [
-      "Weapon",
-      hero.gear.weapon
-        ? `${hero.gear.weapon.prefix ? `${hero.gear.weapon.prefix} ` : ""}${hero.gear.weapon.name} (+${wp})`
-        : "none",
-    ],
+    ["Gear", `${equipped}/5 equipped`],
     ["XP", `${hero.exp}/${hero.expToNext}`],
   ];
   return (
@@ -96,6 +131,9 @@ export default function RightPanel() {
   const healHero = useGuildStore((s) => s.healHero);
   const activeQuests = useGuildStore((s) => s.activeQuests);
   const dungeons = useGuildStore((s) => s.dungeons);
+  const floatingTexts = useGuildStore((s) => s.floatingTexts);
+  const removeFloatingText = useGuildStore((s) => s.removeFloatingText);
+  const retireHero = useGuildStore((s) => s.retireHero);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
@@ -110,9 +148,10 @@ export default function RightPanel() {
         </h2>
         <ul className="flex-1 space-y-2 overflow-y-auto p-3">
           {heroes.map((hero) => {
-            const { fortitude, max_fortitude } = hero.stats;
-            const pct = Math.round((fortitude / max_fortitude) * 100);
-            const hurt = fortitude < max_fortitude;
+            const { fortitude } = hero.stats;
+            const maxFort = totalStats(hero).maxFortitude; // armor counts
+            const pct = Math.round((fortitude / maxFort) * 100);
+            const hurt = fortitude < maxFort;
             const canAfford = gold >= HEAL_COST;
             const status = STATUS_LABEL[hero.status];
             const quest = activeQuests.find((q) => q.heroId === hero.id);
@@ -124,8 +163,23 @@ export default function RightPanel() {
             return (
               <li
                 key={hero.id}
-                className="rounded-md border border-slate-800 bg-slate-800/40 p-3"
+                className="relative rounded-md border border-slate-800 bg-slate-800/40 p-3"
               >
+                {/* floating quest-result text, drifts up and fades */}
+                {floatingTexts
+                  .filter((f) => f.heroId === hero.id)
+                  .map((f) => (
+                    <motion.div
+                      key={f.id}
+                      initial={{ opacity: 1, y: 0 }}
+                      animate={{ opacity: 0, y: -20 }}
+                      transition={{ duration: 1.5, ease: "easeOut" }}
+                      onAnimationComplete={() => removeFloatingText(f.id)}
+                      className={`pointer-events-none absolute right-3 top-2 z-10 font-mono text-sm font-bold ${f.color}`}
+                    >
+                      {f.text}
+                    </motion.div>
+                  ))}
                 {/* header: click toggles full sheet (2), hover shows tooltip (3) */}
                 <div className="group relative">
                   <button
@@ -173,17 +227,18 @@ export default function RightPanel() {
                     aria-label={`${hero.name} fortitude`}
                     aria-valuenow={fortitude}
                     aria-valuemin={0}
-                    aria-valuemax={max_fortitude}
+                    aria-valuemax={maxFort}
                     className="h-2 overflow-hidden rounded-full bg-slate-700"
                   >
-                    <div
-                      className={`h-full rounded-full transition-[width] duration-300 ${hpBarColor(pct)}`}
-                      style={{ width: `${pct}%` }}
+                    <motion.div
+                      className={`h-full rounded-full ${hpBarColor(pct)}`}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ duration: 0.5, ease: "easeOut" }}
                     />
                   </div>
                   <div className="mt-1 flex items-center justify-between">
                     <span className="font-mono text-xs tabular-nums text-slate-400">
-                      {fortitude}/{max_fortitude}
+                      {fortitude}/{maxFort}
                     </span>
                     <span className={`text-xs font-medium ${status.className}`}>
                       {status.text}
@@ -215,6 +270,7 @@ export default function RightPanel() {
 
                 {/* always-visible compact stats (1) */}
                 <QuickStats hero={hero} />
+                <GearSlots hero={hero} />
 
                 {/* click-expanded full sheet (2) */}
                 {expanded && (
@@ -226,21 +282,36 @@ export default function RightPanel() {
                 {quest && questDungeon && (
                   <CountdownBar
                     completionTime={quest.completionTime}
-                    duration={questDungeon.base_duration_ms / hero.stats.speed}
+                    duration={questDungeon.base_duration_ms / totalStats(hero).speed}
                   />
                 )}
 
-                {hurt && hero.status !== "on_quest" && (
-                  <button
-                    type="button"
-                    onClick={() => healHero(hero.id)}
-                    disabled={!canAfford}
-                    title={canAfford ? undefined : `Need ${HEAL_COST} gold`}
-                    className="mt-2 min-h-9 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Heal ({HEAL_COST}g)
-                  </button>
-                )}
+                <div className="mt-2 flex gap-1.5">
+                  {hurt && hero.status !== "on_quest" && (
+                    <button
+                      type="button"
+                      onClick={() => healHero(hero.id)}
+                      disabled={!canAfford}
+                      title={canAfford ? undefined : `Need ${HEAL_COST} gold`}
+                      className="min-h-9 flex-1 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Heal ({HEAL_COST}g)
+                    </button>
+                  )}
+                  {hero.status === "idle" && (
+                    <Tooltip
+                      text={`Retire ${hero.name} for +${hero.level * RETIRE_REP_PER_LEVEL} reputation. Permanent.`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => retireHero(hero.id)}
+                        className="min-h-9 w-full cursor-pointer rounded-md border border-rose-500/40 bg-rose-500/10 px-2 text-xs font-medium text-rose-400 transition-colors hover:bg-rose-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                      >
+                        Retire
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
               </li>
             );
           })}

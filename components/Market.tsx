@@ -2,20 +2,34 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ICONS } from "@/components/assets";
-import { useGuildStore, type Rarity } from "@/store/useGuildStore";
+import { RARITY_STYLE, rarityBlurb, statLine } from "@/components/rarity";
+import Tooltip from "@/components/Tooltip";
+import {
+  MATERIAL_BASE_PRICE,
+  useGuildStore,
+  type MaterialKey,
+} from "@/store/useGuildStore";
 
-const RARITY_STYLE: Record<Rarity, string> = {
-  common: "text-gray-400 border-slate-700",
-  uncommon: "text-green-400 border-green-500/30",
-  rare: "text-blue-400 border-blue-500/30",
-  epic: "text-purple-400 border-purple-500/30",
-  legendary: "text-yellow-400 border-yellow-500/40",
-};
+const MATERIALS: { key: MaterialKey; label: string; icon: string }[] = [
+  { key: "organics", label: "Organics", icon: ICONS.organics },
+  { key: "minerals", label: "Minerals", icon: ICONS.minerals },
+  { key: "botanicals", label: "Botanicals", icon: ICONS.botanicals },
+];
+
+const demand = (rate: number) =>
+  rate >= 1.2
+    ? { text: "High Demand", className: "text-emerald-400" }
+    : rate <= 0.8
+      ? { text: "Low Demand", className: "text-rose-400" }
+      : { text: "Stable", className: "text-slate-400" };
 
 export default function Market() {
   const heroes = useGuildStore((s) => s.heroes);
   const inventory = useGuildStore((s) => s.inventory);
   const heroBuyItem = useGuildStore((s) => s.heroBuyItem);
+  const materials = useGuildStore((s) => s.ledger.materials);
+  const marketRates = useGuildStore((s) => s.marketRates);
+  const sellMaterial = useGuildStore((s) => s.sellMaterial);
 
   // itemId -> inline "no buyer" error, auto-cleared
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -60,6 +74,41 @@ export default function Market() {
         </p>
       </section>
 
+      {/* ── Commodity exchange: rates roll every 60s ── */}
+      <section className="mt-4">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+          Commodity Exchange
+        </h3>
+        <ul className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          {MATERIALS.map((m) => {
+            const rate = marketRates[m.key];
+            const d = demand(rate);
+            const count = materials[m.key];
+            const payout = Math.floor(count * MATERIAL_BASE_PRICE[m.key] * rate);
+            return (
+              <li key={m.key} className="rounded-md border border-slate-800 bg-slate-900 p-3">
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
+                  <img src={m.icon} alt="" width={18} height={18} className="pixel size-[18px] object-contain" />
+                  <span className="text-sm text-slate-200">{m.label}</span>
+                  <span className={`ml-auto text-xs font-medium ${d.className}`}>
+                    {d.text} ({rate}×)
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => sellMaterial(m.key)}
+                  disabled={count === 0}
+                  className="mt-2 min-h-9 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Sell {count} for {payout}g
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
       {/* ── Stock ── */}
       <section className="mt-4">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
@@ -76,19 +125,23 @@ export default function Market() {
                 key={item.id}
                 className={`rounded-md border bg-slate-900 p-3 ${RARITY_STYLE[item.rarity]}`}
               >
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="truncate text-sm font-medium">
-                    {item.prefix ? `${item.prefix} ` : ""}
-                    {item.name}
+                <Tooltip text={rarityBlurb(item)}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="truncate text-sm font-medium">
+                      {item.prefix ? `${item.prefix} ` : ""}
+                      {item.name}
+                    </p>
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-amber-400">
+                      {item.price}g
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs capitalize opacity-75">
+                    {item.rarity} {item.subType}
                   </p>
-                  <span className="shrink-0 font-mono text-xs tabular-nums text-amber-400">
-                    {item.price}g
-                  </span>
-                </div>
-                <p className="mt-1 text-xs capitalize opacity-75">{item.rarity}</p>
-                <p className="mt-1 font-mono text-xs tabular-nums text-slate-300">
-                  Power +{item.base_stats.power}
-                </p>
+                  <p className="mt-1 font-mono text-xs tabular-nums text-slate-300">
+                    {statLine(item)}
+                  </p>
+                </Tooltip>
 
                 <button
                   type="button"
