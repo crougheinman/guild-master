@@ -6,6 +6,7 @@ import ItemIcon from "@/components/ItemIcon";
 import { RARITY_STYLE, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 import {
+  CONSUMABLE_PRICE,
   MATERIAL_BASE_PRICE,
   useGuildStore,
   type MaterialKey,
@@ -31,6 +32,9 @@ export default function Market() {
   const materials = useGuildStore((s) => s.ledger.materials);
   const marketRates = useGuildStore((s) => s.marketRates);
   const sellMaterial = useGuildStore((s) => s.sellMaterial);
+  const gold = useGuildStore((s) => s.ledger.gold);
+  const consumables = useGuildStore((s) => s.consumables);
+  const buyConsumable = useGuildStore((s) => s.buyConsumable);
 
   // itemId -> inline "no buyer" error, auto-cleared
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -103,6 +107,38 @@ export default function Market() {
                   className="mt-2 min-h-9 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Sell {count} for {payout}g
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      {/* ── Apothecary: buy boss-fight consumables (gold sink) ── */}
+      <section className="mt-4">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+          Apothecary
+        </h3>
+        <ul className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          {consumables.map((c) => {
+            const price = CONSUMABLE_PRICE[c.id];
+            return (
+              <li key={c.id} className="rounded-md border border-slate-800 bg-slate-900 p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium text-slate-200">{c.name}</span>
+                  <span className="font-mono text-xs tabular-nums text-slate-400">
+                    owned ×{c.quantity}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">{c.effect}</p>
+                <button
+                  type="button"
+                  onClick={() => buyConsumable(c.id)}
+                  disabled={gold < price}
+                  title={gold < price ? "Not enough gold" : undefined}
+                  className="mt-2 min-h-9 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Buy ({price}g)
                 </button>
               </li>
             );

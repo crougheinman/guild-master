@@ -13,7 +13,7 @@ import {
 } from "pixi.js";
 import {
   BACKDROP,
-  orcAnims,
+  monsterAnims,
   PARTICLES,
   unitAnims,
   type Clip,
@@ -122,7 +122,7 @@ export default function CombatVisualizer() {
         .heroes.filter((h) => h.status === "on_quest");
 
       const heroCfgs = fighters.map((h) => unitAnims("Blue", h.job));
-      const enemyCfgs = fighters.map(() => orcAnims()); // every enemy is an Orc
+      const enemyCfgs = fighters.map((h) => monsterAnims(h.id)); // random monster per duel
 
       const urls = new Set<string>([
         BACKDROP.tilemap,
@@ -315,7 +315,8 @@ export default function CombatVisualizer() {
         const heroAnims = loadAnimSet(loaded, heroCfg);
         const enemyAnims = loadAnimSet(loaded, enemyCfg);
         const heroSc = (baseUnit / heroCfg.size) * depthScale;
-        const enemySc = (baseUnit / enemyCfg.size) * depthScale;
+        const enemySc =
+          (baseUnit / enemyCfg.size) * (enemyCfg.bodyScale ?? 1) * depthScale;
 
         const heroShadow = makeShadow(heroX, feetY, baseUnit * 0.5 * depthScale);
         const enemyShadow = makeShadow(enemyX, feetY, baseUnit * 0.5 * depthScale);

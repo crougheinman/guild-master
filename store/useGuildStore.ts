@@ -146,6 +146,67 @@ export interface HeroChat {
   expiresAt: number;
 }
 
+// ---------- Boss raids & consumables ----------
+
+export type ConsumableId = "life_potion" | "phoenix_vial" | "haste_scroll";
+
+export interface Consumable {
+  id: ConsumableId;
+  name: string;
+  type: "potion" | "scroll";
+  effect: string; // human-readable blurb shown in the Arsenal
+  quantity: number;
+}
+
+export interface LoadoutEntry {
+  heroId: string | "global"; // "global" = the single guild-wide slot
+  itemId: ConsumableId;
+  triggerCondition: string;
+}
+
+export interface BossFight {
+  bossId: string;
+  heroIds: string[];
+  bossHp: number;
+  round: number;
+  hasteMul: number; // 1 or 1.5 when a Scroll of Haste fired at combat start
+}
+
+export interface BossDef {
+  id: string;
+  name: string;
+  maxHp: number;
+  damage: number; // fortitude chunk dealt to one random hero per tick
+  rewardGold: number;
+  rewardRep: number;
+  rewardExp: number;
+}
+
+export const BOSSES: BossDef[] = [
+  { id: "boss-1", name: "Crushing Cyclops", maxHp: 400, damage: 6, rewardGold: 400, rewardRep: 25, rewardExp: 150 },
+  { id: "boss-2", name: "Brawny Ogre", maxHp: 600, damage: 9, rewardGold: 600, rewardRep: 40, rewardExp: 220 },
+  { id: "boss-3", name: "Stone Troll", maxHp: 850, damage: 12, rewardGold: 850, rewardRep: 55, rewardExp: 300 },
+  { id: "boss-4", name: "Swamp Troll", maxHp: 1100, damage: 15, rewardGold: 1100, rewardRep: 70, rewardExp: 380 },
+  { id: "boss-5", name: "Ocular Watcher", maxHp: 1400, damage: 18, rewardGold: 1400, rewardRep: 90, rewardExp: 470 },
+  { id: "boss-6", name: "Humongous Ettin", maxHp: 1800, damage: 22, rewardGold: 1800, rewardRep: 115, rewardExp: 580 },
+];
+
+export const MAX_HERO_SLOTS = 2; // loadout slots per hero
+export const MAX_PARTY = 5;
+
+export const CONSUMABLE_TRIGGERS: Record<ConsumableId, string> = {
+  life_potion: "hp<30%",
+  phoenix_vial: "on_death",
+  haste_scroll: "combat_start",
+};
+
+// gold sink — restock consumables from the Market
+export const CONSUMABLE_PRICE: Record<ConsumableId, number> = {
+  life_potion: 60,
+  phoenix_vial: 250,
+  haste_scroll: 120,
+};
+
 // ---------- Store ----------
 
 interface GuildState {
@@ -155,6 +216,9 @@ interface GuildState {
   dungeons: Dungeon[];
   activeQuests: ActiveQuest[];
   inventory: Item[];
+  consumables: Consumable[]; // guild stock of potions/scrolls
+  combatLoadout: LoadoutEntry[]; // max 2 per hero + 1 "global" slot
+  bossFight: BossFight | null; // active raid, ticked by GameTicker
   eventLog: LogEntry[];
   floatingTexts: FloatingText[]; // ephemeral UI juice, not persisted
   activeChats: HeroChat[]; // ephemeral hero chatter, not persisted
@@ -163,6 +227,11 @@ interface GuildState {
 
   dispatchHero: (heroId: string, dungeonId: string) => void;
   tickQuests: () => void;
+  assignConsumable: (slotOwner: string | "global", itemId: ConsumableId) => boolean;
+  unassignConsumable: (index: number) => void;
+  buyConsumable: (itemId: ConsumableId) => boolean;
+  startBossFight: (bossId: string, heroIds: string[]) => void;
+  tickBossFight: () => void;
   addLog: (message: string) => void;
   healHero: (heroId: string) => void;
   refreshTavern: () => void;
@@ -370,6 +439,9 @@ type GuildData = Pick<
   | "dungeons"
   | "activeQuests"
   | "inventory"
+  | "consumables"
+  | "combatLoadout"
+  | "bossFight"
   | "eventLog"
   | "floatingTexts"
   | "activeChats"
@@ -427,10 +499,62 @@ const initialState = (): GuildData => ({
         materials: { minerals: [1, 2], botanicals: [1, 4] },
       },
     },
+    {
+      id: "dungeon-3",
+      name: "Cursed Monastery",
+      threat_level: 30,
+      base_duration_ms: 180_000,
+      tags: ["undead", "holy"],
+      loot_table: {
+        gold: [40, 90],
+        materials: { botanicals: [2, 5], organics: [1, 3] },
+      },
+    },
+    {
+      id: "dungeon-4",
+      name: "Shadow Spire",
+      threat_level: 50,
+      base_duration_ms: 300_000,
+      tags: ["arcane"],
+      loot_table: {
+        gold: [80, 160],
+        materials: { minerals: [2, 5] },
+      },
+    },
+    {
+      id: "dungeon-5",
+      name: "Gilded Vault",
+      threat_level: 75,
+      base_duration_ms: 480_000,
+      tags: ["construct", "treasure"],
+      loot_table: {
+        gold: [150, 300],
+        materials: { minerals: [3, 6], botanicals: [2, 4] },
+      },
+    },
+    {
+      id: "dungeon-6",
+      name: "Black Citadel",
+      threat_level: 100,
+      base_duration_ms: 600_000,
+      tags: ["demonic", "endgame"],
+      loot_table: {
+        gold: [250, 500],
+        materials: { organics: [3, 6], minerals: [3, 6], botanicals: [3, 6] },
+      },
+    },
   ],
 
   activeQuests: [],
   inventory: [],
+  // ponytail: starter stock hardcoded; buyable consumables in Market when economy needs the sink
+  consumables: [
+    { id: "life_potion", name: "Life Potion", type: "potion", effect: "Below 30% HP: restore 50% HP", quantity: 3 },
+    { id: "phoenix_vial", name: "Phoenix Vial", type: "potion", effect: "On death: revive at 20% HP", quantity: 1 },
+    { id: "haste_scroll", name: "Scroll of Haste", type: "scroll", effect: "Combat start: +50% party attack", quantity: 2 },
+  ],
+  combatLoadout: [],
+  bossFight: null,
   eventLog: [],
   floatingTexts: [],
   activeChats: [],
@@ -447,7 +571,8 @@ export const useGuildStore = create<GuildState>()(
             ([k, v]) =>
               typeof v !== "function" &&
               k !== "floatingTexts" &&
-              k !== "activeChats",
+              k !== "activeChats" &&
+              k !== "dungeons",
           ),
         );
         // UTF-8-safe base64: btoa alone throws on chars >255 (logs contain ×, —)
@@ -467,7 +592,13 @@ export const useGuildStore = create<GuildState>()(
             !Array.isArray(parsed.heroes)
           )
             return false;
-          set({ ...parsed, floatingTexts: [], activeChats: [] });
+          // dungeons stay code-defined — old exports must not shadow new content
+          set({
+            ...parsed,
+            floatingTexts: [],
+            activeChats: [],
+            dungeons: get().dungeons,
+          });
           return true;
         } catch {
           return false;
@@ -503,6 +634,238 @@ export const useGuildStore = create<GuildState>()(
         setTimeout(() => {
           set({ activeChats: get().activeChats.filter((c) => c.id !== id) });
         }, durationMs);
+      },
+
+      // ── Boss raids & consumable loadout ──
+
+      assignConsumable: (slotOwner, itemId) => {
+        const { consumables, combatLoadout, bossFight } = get();
+        if (bossFight) return false; // loadout locked mid-raid
+
+        const stock = consumables.find((c) => c.id === itemId);
+        if (!stock) return false;
+
+        // every loadout entry reserves one unit of stock
+        const reserved = combatLoadout.filter((l) => l.itemId === itemId).length;
+        if (reserved >= stock.quantity) return false;
+
+        const slotsUsed = combatLoadout.filter((l) => l.heroId === slotOwner).length;
+        const maxSlots = slotOwner === "global" ? 1 : MAX_HERO_SLOTS;
+        if (slotsUsed >= maxSlots) return false;
+
+        set({
+          combatLoadout: [
+            ...combatLoadout,
+            { heroId: slotOwner, itemId, triggerCondition: CONSUMABLE_TRIGGERS[itemId] },
+          ],
+        });
+        return true;
+      },
+
+      unassignConsumable: (index) => {
+        if (get().bossFight) return;
+        set({ combatLoadout: get().combatLoadout.filter((_, i) => i !== index) });
+      },
+
+      buyConsumable: (itemId) => {
+        const { ledger, consumables, addLog } = get();
+        const price = CONSUMABLE_PRICE[itemId];
+        if (ledger.gold < price) return false;
+
+        const stock = consumables.find((c) => c.id === itemId);
+        if (!stock) return false;
+
+        set({
+          ledger: { ...ledger, gold: ledger.gold - price },
+          consumables: consumables.map((c) =>
+            c.id === itemId ? { ...c, quantity: c.quantity + 1 } : c,
+          ),
+        });
+        addLog(`Bought a ${stock.name} for ${price}g.`);
+        return true;
+      },
+
+      startBossFight: (bossId, heroIds) => {
+        const { heroes, bossFight, consumables, combatLoadout, addLog } = get();
+        if (bossFight) return;
+
+        const bossDef = BOSSES.find((b) => b.id === bossId);
+        if (!bossDef) return;
+
+        const party = heroes.filter(
+          (h) => heroIds.includes(h.id) && h.status === "idle" && h.stats.fortitude > 0,
+        );
+        if (party.length === 0 || party.length > MAX_PARTY) return;
+
+        // Scroll of Haste fires at combat start from the global slot
+        let hasteMul = 1;
+        let nextConsumables = consumables;
+        let nextLoadout = combatLoadout;
+        const hasteIdx = combatLoadout.findIndex(
+          (l) => l.heroId === "global" && l.itemId === "haste_scroll",
+        );
+        if (hasteIdx !== -1) {
+          hasteMul = 1.5;
+          nextLoadout = combatLoadout.filter((_, i) => i !== hasteIdx);
+          nextConsumables = consumables.map((c) =>
+            c.id === "haste_scroll" ? { ...c, quantity: c.quantity - 1 } : c,
+          );
+        }
+
+        set({
+          bossFight: {
+            bossId: bossDef.id,
+            heroIds: party.map((h) => h.id),
+            bossHp: bossDef.maxHp,
+            round: 0,
+            hasteMul,
+          },
+          consumables: nextConsumables,
+          combatLoadout: nextLoadout,
+          heroes: heroes.map((h) =>
+            party.some((p) => p.id === h.id)
+              ? { ...h, status: "on_quest" as const }
+              : h,
+          ),
+        });
+        addLog(`The party marches on ${bossDef.name}! (${party.length} heroes)`);
+        if (hasteMul > 1) {
+          const blessed = party[Math.floor(Math.random() * party.length)];
+          get().triggerHeroChat(
+            blessed.id,
+            "I feel the Guildmaster's blessing!",
+            "combat",
+          );
+        }
+      },
+
+      tickBossFight: () => {
+        const fight = get().bossFight;
+        if (!fight) return;
+        const bossDef = BOSSES.find((b) => b.id === fight.bossId)!;
+        const { heroes, consumables, combatLoadout, ledger } = get();
+
+        const inParty = (h: Hero) => fight.heroIds.includes(h.id);
+        const living = heroes.filter((h) => inParty(h) && h.stats.fortitude > 0);
+        const newLogs: LogEntry[] = [];
+        const chats: { heroId: string; text: string }[] = [];
+
+        // ── party swings first ──
+        const partyDmg = Math.round(
+          living.reduce((sum, h) => sum + totalStats(h).power, 0) * fight.hasteMul,
+        );
+        const bossHp = fight.bossHp - partyDmg;
+
+        if (bossHp <= 0) {
+          // victory — pay out, level the party, release heroes
+          let updated = heroes;
+          const perHeroExp = Math.floor(bossDef.rewardExp / fight.heroIds.length);
+          updated = updated.map((h) => {
+            if (!inParty(h)) return h;
+            const { hero: leveled, logs } = gainExp(h, perHeroExp);
+            logs.forEach((l) => newLogs.push(makeLog(l)));
+            return {
+              ...leveled,
+              status: leveled.stats.fortitude > 0 ? ("idle" as const) : ("injured" as const),
+            };
+          });
+          newLogs.push(
+            makeLog(
+              `${bossDef.name} falls! +${bossDef.rewardGold} gold, +${bossDef.rewardRep} reputation.`,
+            ),
+          );
+          set({
+            bossFight: null,
+            heroes: updated,
+            ledger: {
+              ...ledger,
+              gold: ledger.gold + bossDef.rewardGold,
+              reputation: ledger.reputation + bossDef.rewardRep,
+            },
+            eventLog: [...newLogs, ...get().eventLog].slice(0, MAX_LOG_ENTRIES),
+          });
+          return;
+        }
+
+        // ── boss strikes one random living hero ──
+        const target = living[Math.floor(Math.random() * living.length)];
+        let nextConsumables = consumables;
+        let nextLoadout = combatLoadout;
+
+        // consume one unit + drop the loadout entry; false if none equipped
+        const consume = (heroId: string, itemId: ConsumableId): boolean => {
+          const idx = nextLoadout.findIndex(
+            (l) => l.heroId === heroId && l.itemId === itemId,
+          );
+          if (idx === -1) return false;
+          nextLoadout = nextLoadout.filter((_, i) => i !== idx);
+          nextConsumables = nextConsumables.map((c) =>
+            c.id === itemId ? { ...c, quantity: c.quantity - 1 } : c,
+          );
+          return true;
+        };
+
+        // per-hero consumable auto-triggers, checked every combat tick
+        const checkConsumableTriggers = (h: Hero): Hero => {
+          const max = totalStats(h).maxFortitude;
+          let fort = h.stats.fortitude;
+
+          // Phoenix Vial — death prevention first
+          if (fort <= 0 && consume(h.id, "phoenix_vial")) {
+            fort = Math.max(1, Math.round(max * 0.2));
+            chats.push({ heroId: h.id, text: "Second wind! Let's go!" });
+            newLogs.push(makeLog(`${h.name}'s Phoenix Vial shatters — back on their feet!`));
+          }
+          if (fort < 0) fort = 0; // down, no vial — don't leak negative HP into bars
+          // Life Potion — emergency heal below 30%
+          if (fort > 0 && fort < max * 0.3 && consume(h.id, "life_potion")) {
+            fort = Math.min(max, fort + Math.round(max * 0.5));
+            chats.push({ heroId: h.id, text: "I'm not dying today!" });
+            newLogs.push(makeLog(`${h.name} downs a Life Potion mid-fight.`));
+          }
+          return fort === h.stats.fortitude
+            ? h
+            : { ...h, stats: { ...h.stats, fortitude: fort } };
+        };
+
+        let updated = heroes.map((h) => {
+          if (!inParty(h)) return h;
+          const struck =
+            h.id === target?.id
+              ? { ...h, stats: { ...h.stats, fortitude: h.stats.fortitude - bossDef.damage } }
+              : h;
+          return checkConsumableTriggers(struck);
+        });
+
+        const anyoneUp = updated.some((h) => inParty(h) && h.stats.fortitude > 0);
+        if (!anyoneUp) {
+          // wipe — everyone limps home injured
+          updated = updated.map((h) =>
+            inParty(h)
+              ? { ...h, status: "injured" as const, stats: { ...h.stats, fortitude: 0 } }
+              : h,
+          );
+          newLogs.push(makeLog(`The party was wiped out by ${bossDef.name}...`));
+          set({
+            bossFight: null,
+            heroes: updated,
+            consumables: nextConsumables,
+            combatLoadout: nextLoadout,
+            eventLog: [...newLogs, ...get().eventLog].slice(0, MAX_LOG_ENTRIES),
+          });
+          return;
+        }
+
+        set({
+          bossFight: { ...fight, bossHp, round: fight.round + 1 },
+          heroes: updated,
+          consumables: nextConsumables,
+          combatLoadout: nextLoadout,
+          eventLog: newLogs.length
+            ? [...newLogs, ...get().eventLog].slice(0, MAX_LOG_ENTRIES)
+            : get().eventLog,
+        });
+        for (const c of chats) get().triggerHeroChat(c.heroId, c.text, "combat");
       },
 
       retireHero: (heroId) => {
@@ -914,11 +1277,21 @@ export const useGuildStore = create<GuildState>()(
       version: 7,
       // stale save → intentional reset to defaults (merge fills everything)
       migrate: () => ({}) as GuildState,
-      // floatingTexts/activeChats are ephemeral juice — never write to localStorage
+      // saves written before dungeons were unpersisted still carry a stale
+      // dungeons array — always take the code-defined list
+      merge: (persisted, current) => ({
+        ...current,
+        ...(persisted as Partial<GuildState>),
+        dungeons: current.dungeons,
+      }),
+      // floatingTexts/activeChats are ephemeral juice — never write to localStorage.
+      // dungeons are static content from code — persisting them would freeze old
+      // saves out of newly added dungeons.
       partialize: (state) =>
         Object.fromEntries(
           Object.entries(state).filter(
-            ([k]) => k !== "floatingTexts" && k !== "activeChats",
+            ([k]) =>
+              k !== "floatingTexts" && k !== "activeChats" && k !== "dungeons",
           ),
         ) as GuildState,
     },

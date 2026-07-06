@@ -13,6 +13,7 @@ import { useGuildStore } from "@/store/useGuildStore";
 export default function GameTicker() {
   const tickQuests = useGuildStore((s) => s.tickQuests);
   const rollMarket = useGuildStore((s) => s.rollMarket);
+  const tickBossFight = useGuildStore((s) => s.tickBossFight);
 
   useEffect(() => {
     tickQuests(); // offline progress
@@ -20,10 +21,11 @@ export default function GameTicker() {
     let seconds = 0;
     const id = setInterval(() => {
       tickQuests();
+      tickBossFight(); // no-op unless a raid is running
       if (++seconds % 60 === 0) rollMarket(); // market shifts every minute
     }, 1000);
     return () => clearInterval(id);
-  }, [tickQuests, rollMarket]);
+  }, [tickQuests, rollMarket, tickBossFight]);
 
   return null;
 }

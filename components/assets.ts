@@ -38,6 +38,10 @@ export const ITEM_ICONS: Record<SubType, { col: number; row: number }> = {
 export const DUNGEON_ART: Record<string, string> = {
   "dungeon-1": "/game-assets/Buildings/Red Buildings/Tower.png", // Goblin Cave
   "dungeon-2": "/game-assets/Buildings/Red Buildings/Barracks.png", // Bandit Camp
+  "dungeon-3": "/game-assets/Buildings/Black Buildings/Monastery.png", // Cursed Monastery
+  "dungeon-4": "/game-assets/Buildings/Purple Buildings/Tower.png", // Shadow Spire
+  "dungeon-5": "/game-assets/Buildings/Yellow Buildings/Castle.png", // Gilded Vault
+  "dungeon-6": "/game-assets/Buildings/Black Buildings/Castle.png", // Black Citadel
 };
 
 // ── combat sprite strips, per job ──
@@ -57,6 +61,9 @@ export interface JobAnims {
   idle: Clip;
   attacks: Clip[]; // one is picked at random per swing
   guard?: Clip;
+  // display multiplier — small sprites whose body fills the frame (16px
+  // monsters) render oversized next to padded 100px+ frames without this
+  bodyScale?: number;
 }
 
 export function unitAnims(team: Team, job: Job): JobAnims {
@@ -114,6 +121,52 @@ export function orcAnims(): JobAnims {
   };
 }
 export const ORC_HURT = { url: `${ORC}/Orc-Hurt.png`, frames: 4, size: 100 };
+
+// boss portraits — animated gifs, plain <img> plays them for free
+export const BOSS_ART: Record<string, string> = {
+  "boss-1": "/game-assets/Enemies/Crushing Cyclops/CrushingCyclops.gif",
+  "boss-2": "/game-assets/Enemies/Brawny Ogre/BrawnyOgre.gif",
+  "boss-3": "/game-assets/Enemies/Stone Troll/StoneTroll.gif",
+  "boss-4": "/game-assets/Enemies/Swamp Troll/SwampTroll.gif",
+  "boss-5": "/game-assets/Enemies/Ocular Watcher/OcularWatcher.gif",
+  "boss-6": "/game-assets/Enemies/Humongous Ettin/HumongousEttin.gif",
+};
+
+// ── 16×16 monster pack: one 4-frame idle strip each, body fills the frame ──
+const MONSTERS = [
+  "Blinded Grimlock/BlindedGrimlock",
+  "Bloodshot Eye/BloodshotEye",
+  "Brawny Ogre/BrawnyOgre",
+  "Crimson Slaad/CrimsonSlaad",
+  "Crushing Cyclops/CrushingCyclops",
+  "Death Slime/DeathSlime",
+  "Fungal Myconid/FungalMyconid",
+  "Humongous Ettin/HumongousEttin",
+  "Murky Slaad/MurkySlaad",
+  "Ochre Jelly/OchreJelly",
+  "Ocular Watcher/OcularWatcher",
+  "Red Cap/RedCap",
+  "Shrieker Mushroom/ShriekerMushroom",
+  "Stone Troll/StoneTroll",
+  "Swamp Troll/SwampTroll",
+] as const;
+
+// deterministic pick per seed (heroId) — stable across scene rebuilds/resizes.
+// Orc is one slot in the pool; monsters reuse idle as the attack clip (the
+// lunge tween sells the swing).
+export function monsterAnims(seed: string): JobAnims {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  const n = Math.abs(hash) % (MONSTERS.length + 1);
+  if (n === MONSTERS.length) return orcAnims();
+  const clip: Clip = {
+    url: `/game-assets/Enemies/${MONSTERS[n]}.png`,
+    frames: 4,
+  };
+  return { size: 16, idle: clip, attacks: [clip], bodyScale: 0.6 };
+}
 
 // ── combat FX + backdrop ──
 export const PARTICLES = {
