@@ -10,6 +10,7 @@ import {
 } from "@/store/useGuildStore";
 import { ICONS } from "@/components/assets";
 import ItemIcon from "@/components/ItemIcon";
+import ModuleHelp from "@/components/ModuleHelp";
 import { RARITY_STYLE, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 
@@ -45,7 +46,10 @@ export default function Forge() {
       <div className="mb-4 flex items-center gap-2">
         {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
         <img src={ICONS.forge} alt="" width={24} height={24} className="pixel size-6 object-contain" />
-        <h2 className="text-lg font-semibold text-slate-100">Forge</h2>
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
+          Forge
+          <ModuleHelp text="Spend materials (from quests) to craft gear. Pick a slot, then Craft — rarity and stat bonus roll randomly, higher tiers are rarer. Crafted items land in the Armory below and can be sold to heroes in the Market." />
+        </h2>
       </div>
 
       {/* ── Crafting ── */}

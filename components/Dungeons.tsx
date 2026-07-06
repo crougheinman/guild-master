@@ -5,6 +5,7 @@ import { AnimatePresence } from "framer-motion";
 import { BOSS_ART, DUNGEON_ART } from "@/components/assets";
 import BossPrepScreen from "@/components/BossPrepScreen";
 import HeroPicker from "@/components/HeroPicker";
+import ModuleHelp from "@/components/ModuleHelp";
 import { BOSSES, useGuildStore, type Dungeon } from "@/store/useGuildStore";
 
 const formatDuration = (ms: number) =>
@@ -77,12 +78,16 @@ export default function Dungeons() {
 
   return (
     <div className="p-4">
-      <h2 className="mb-4 text-lg font-semibold text-slate-100">Dungeons</h2>
+      <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-100">
+        Dungeons
+        <ModuleHelp text="Send idle heroes on quests here. Success depends on hero Power vs the dungeon's Threat level — higher threat pays more gold and materials but risks injury on a loss. Injured heroes rest at 0 Fortitude until healed in the Roster panel." />
+      </h2>
 
       {/* ── Boss raids ── */}
       <section className="mb-4">
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+        <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
           Boss Raids
+          <ModuleHelp text="Pick a boss, assign potions/scrolls to your party in the Prep screen, then Begin Raid. Combat resolves automatically over several rounds — consumables like Life Potions and Phoenix Vials trigger on their own to save heroes. Win for gold, reputation, exp, and materials." />
         </h3>
         {activeBoss ? (
           <button

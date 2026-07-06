@@ -180,16 +180,27 @@ export interface BossDef {
   rewardGold: number;
   rewardRep: number;
   rewardExp: number;
+  rewardMaterials: Partial<Record<MaterialKey, number>>;
 }
 
 export const BOSSES: BossDef[] = [
-  { id: "boss-1", name: "Crushing Cyclops", maxHp: 400, damage: 6, rewardGold: 400, rewardRep: 25, rewardExp: 150 },
-  { id: "boss-2", name: "Brawny Ogre", maxHp: 600, damage: 9, rewardGold: 600, rewardRep: 40, rewardExp: 220 },
-  { id: "boss-3", name: "Stone Troll", maxHp: 850, damage: 12, rewardGold: 850, rewardRep: 55, rewardExp: 300 },
-  { id: "boss-4", name: "Swamp Troll", maxHp: 1100, damage: 15, rewardGold: 1100, rewardRep: 70, rewardExp: 380 },
-  { id: "boss-5", name: "Ocular Watcher", maxHp: 1400, damage: 18, rewardGold: 1400, rewardRep: 90, rewardExp: 470 },
-  { id: "boss-6", name: "Humongous Ettin", maxHp: 1800, damage: 22, rewardGold: 1800, rewardRep: 115, rewardExp: 580 },
+  { id: "boss-1", name: "Crushing Cyclops", maxHp: 400, damage: 6, rewardGold: 400, rewardRep: 25, rewardExp: 150, rewardMaterials: { organics: 3 } },
+  { id: "boss-2", name: "Brawny Ogre", maxHp: 600, damage: 9, rewardGold: 600, rewardRep: 40, rewardExp: 220, rewardMaterials: { minerals: 3 } },
+  { id: "boss-3", name: "Stone Troll", maxHp: 850, damage: 12, rewardGold: 850, rewardRep: 55, rewardExp: 300, rewardMaterials: { botanicals: 4, minerals: 2 } },
+  { id: "boss-4", name: "Swamp Troll", maxHp: 1100, damage: 15, rewardGold: 1100, rewardRep: 70, rewardExp: 380, rewardMaterials: { organics: 4, botanicals: 3 } },
+  { id: "boss-5", name: "Ocular Watcher", maxHp: 1400, damage: 18, rewardGold: 1400, rewardRep: 90, rewardExp: 470, rewardMaterials: { minerals: 5, botanicals: 3 } },
+  { id: "boss-6", name: "Humongous Ettin", maxHp: 1800, damage: 22, rewardGold: 1800, rewardRep: 115, rewardExp: 580, rewardMaterials: { organics: 5, minerals: 5, botanicals: 5 } },
 ];
+
+export interface BossResult {
+  bossName: string;
+  win: boolean;
+  gold: number;
+  reputation: number;
+  exp: number;
+  materials: Partial<Record<MaterialKey, number>>;
+  heroNames: string[];
+}
 
 export const MAX_HERO_SLOTS = 2; // loadout slots per hero
 export const MAX_PARTY = 5;
@@ -219,6 +230,7 @@ interface GuildState {
   consumables: Consumable[]; // guild stock of potions/scrolls
   combatLoadout: LoadoutEntry[]; // max 2 per hero + 1 "global" slot
   bossFight: BossFight | null; // active raid, ticked by GameTicker
+  bossResult: BossResult | null; // ephemeral post-raid summary, not persisted
   eventLog: LogEntry[];
   floatingTexts: FloatingText[]; // ephemeral UI juice, not persisted
   activeChats: HeroChat[]; // ephemeral hero chatter, not persisted
@@ -232,10 +244,11 @@ interface GuildState {
   buyConsumable: (itemId: ConsumableId) => boolean;
   startBossFight: (bossId: string, heroIds: string[]) => void;
   tickBossFight: () => void;
+  dismissBossResult: () => void;
   addLog: (message: string) => void;
   healHero: (heroId: string) => void;
   refreshTavern: () => void;
-  hireHero: (candidateId: string) => void;
+  hireHero: (candidateId: string) => boolean;
   craftItem: (subType: SubType) => void;
   heroBuyItem: (itemId: string) => boolean;
   removeFloatingText: (id: string) => void;
@@ -442,6 +455,7 @@ type GuildData = Pick<
   | "consumables"
   | "combatLoadout"
   | "bossFight"
+  | "bossResult"
   | "eventLog"
   | "floatingTexts"
   | "activeChats"
@@ -555,6 +569,7 @@ const initialState = (): GuildData => ({
   ],
   combatLoadout: [],
   bossFight: null,
+  bossResult: null,
   eventLog: [],
   floatingTexts: [],
   activeChats: [],
@@ -572,6 +587,7 @@ export const useGuildStore = create<GuildState>()(
               typeof v !== "function" &&
               k !== "floatingTexts" &&
               k !== "activeChats" &&
+              k !== "bossResult" &&
               k !== "dungeons",
           ),
         );
@@ -597,6 +613,7 @@ export const useGuildStore = create<GuildState>()(
             ...parsed,
             floatingTexts: [],
             activeChats: [],
+            bossResult: null,
             dungeons: get().dungeons,
           });
           return true;
@@ -758,6 +775,7 @@ export const useGuildStore = create<GuildState>()(
 
         if (bossHp <= 0) {
           // victory — pay out, level the party, release heroes
+          const heroNames = heroes.filter(inParty).map((h) => h.name);
           let updated = heroes;
           const perHeroExp = Math.floor(bossDef.rewardExp / fight.heroIds.length);
           updated = updated.map((h) => {
@@ -774,13 +792,30 @@ export const useGuildStore = create<GuildState>()(
               `${bossDef.name} falls! +${bossDef.rewardGold} gold, +${bossDef.rewardRep} reputation.`,
             ),
           );
+          const materials = { ...ledger.materials };
+          for (const [key, amount] of Object.entries(bossDef.rewardMaterials) as [
+            MaterialKey,
+            number,
+          ][]) {
+            materials[key] += amount;
+          }
           set({
             bossFight: null,
+            bossResult: {
+              bossName: bossDef.name,
+              win: true,
+              gold: bossDef.rewardGold,
+              reputation: bossDef.rewardRep,
+              exp: bossDef.rewardExp,
+              materials: bossDef.rewardMaterials,
+              heroNames,
+            },
             heroes: updated,
             ledger: {
               ...ledger,
               gold: ledger.gold + bossDef.rewardGold,
               reputation: ledger.reputation + bossDef.rewardRep,
+              materials,
             },
             eventLog: [...newLogs, ...get().eventLog].slice(0, MAX_LOG_ENTRIES),
           });
@@ -840,6 +875,7 @@ export const useGuildStore = create<GuildState>()(
         const anyoneUp = updated.some((h) => inParty(h) && h.stats.fortitude > 0);
         if (!anyoneUp) {
           // wipe — everyone limps home injured
+          const heroNames = heroes.filter(inParty).map((h) => h.name);
           updated = updated.map((h) =>
             inParty(h)
               ? { ...h, status: "injured" as const, stats: { ...h.stats, fortitude: 0 } }
@@ -848,6 +884,15 @@ export const useGuildStore = create<GuildState>()(
           newLogs.push(makeLog(`The party was wiped out by ${bossDef.name}...`));
           set({
             bossFight: null,
+            bossResult: {
+              bossName: bossDef.name,
+              win: false,
+              gold: 0,
+              reputation: 0,
+              exp: 0,
+              materials: {},
+              heroNames,
+            },
             heroes: updated,
             consumables: nextConsumables,
             combatLoadout: nextLoadout,
@@ -866,6 +911,10 @@ export const useGuildStore = create<GuildState>()(
             : get().eventLog,
         });
         for (const c of chats) get().triggerHeroChat(c.heroId, c.text, "combat");
+      },
+
+      dismissBossResult: () => {
+        set({ bossResult: null });
       },
 
       retireHero: (heroId) => {
@@ -1061,12 +1110,8 @@ export const useGuildStore = create<GuildState>()(
       hireHero: (candidateId) => {
         const { ledger, heroes, tavernCandidates, upgrades, addLog } = get();
         const candidate = tavernCandidates.find((c) => c.id === candidateId);
-        if (
-          !candidate ||
-          ledger.gold < HIRE_COST ||
-          heroes.length >= rosterCap(upgrades)
-        )
-          return;
+        if (!candidate || ledger.gold < HIRE_COST || heroes.length >= rosterCap(upgrades))
+          return false;
 
         set({
           ledger: { ...ledger, gold: ledger.gold - HIRE_COST },
@@ -1079,6 +1124,7 @@ export const useGuildStore = create<GuildState>()(
           const greeter = heroes[randInt([0, heroes.length - 1])];
           get().triggerHeroChat(greeter.id, "Yo, welcome to the guild!!!", "roster");
         }
+        return true;
       },
 
       addLog: (message) => {
@@ -1284,14 +1330,17 @@ export const useGuildStore = create<GuildState>()(
         ...(persisted as Partial<GuildState>),
         dungeons: current.dungeons,
       }),
-      // floatingTexts/activeChats are ephemeral juice — never write to localStorage.
-      // dungeons are static content from code — persisting them would freeze old
-      // saves out of newly added dungeons.
+      // floatingTexts/activeChats/bossResult are ephemeral juice — never write
+      // to localStorage. dungeons are static content from code — persisting
+      // them would freeze old saves out of newly added dungeons.
       partialize: (state) =>
         Object.fromEntries(
           Object.entries(state).filter(
             ([k]) =>
-              k !== "floatingTexts" && k !== "activeChats" && k !== "dungeons",
+              k !== "floatingTexts" &&
+              k !== "activeChats" &&
+              k !== "bossResult" &&
+              k !== "dungeons",
           ),
         ) as GuildState,
     },

@@ -13,13 +13,27 @@ import {
 } from "pixi.js";
 import {
   BACKDROP,
+  bossCombatAnims,
+  CROWN_GLYPH,
+  heroCombatAnims,
   monsterAnims,
   PARTICLES,
-  unitAnims,
   type Clip,
   type JobAnims,
 } from "@/components/assets";
-import { useGuildStore } from "@/store/useGuildStore";
+import { BOSSES, useGuildStore } from "@/store/useGuildStore";
+
+const MOB_COUNT = 3; // flavor monsters scattered around a boss fight
+
+// small seeded PRNG so flavor-mob positions stay put across resize rebuilds
+function seededRand(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return () => {
+    h = (h * 1103515245 + 12345) | 0;
+    return (h >>> 0) / 4294967296;
+  };
+}
 
 const FIGHT_GAP = 78; // distance between the two combatants in a duel
 const TURN_MS = 1500; // one full attack exchange
@@ -29,27 +43,42 @@ const BACK_SCALE = 0.82; // back-row duels shrink for depth
 
 type Side = "hero" | "enemy";
 
-interface LoadedAnims {
-  idle: Texture[];
-  attacks: Texture[][];
-  guard: Texture[] | null;
+// a sliced clip carries its own anchorY: LPC oversize (192px) frames keep the
+// same 64px body centered in a bigger canvas, so the feet sit at 2/3 height
+// instead of the bottom — anchoring per clip keeps feet planted on swap
+interface LoadedClip {
+  frames: Texture[];
+  anchorY: number;
 }
 
-function sliceStrip(base: Texture, frames: number, size: number): Texture[] {
+interface LoadedAnims {
+  idle: LoadedClip;
+  attacks: LoadedClip[];
+  guard: LoadedClip | null;
+}
+
+function sliceStrip(base: Texture, frames: number, size: number, row = 0): Texture[] {
   return Array.from(
     { length: frames },
     (_, i) =>
       new Texture({
         source: base.source,
-        frame: new Rectangle(i * size, 0, size, size),
+        frame: new Rectangle(i * size, row * size, size, size),
       }),
   );
 }
 
-function sliceClip(loaded: Record<string, Texture>, clip: Clip, size: number) {
+function sliceClip(
+  loaded: Record<string, Texture>,
+  clip: Clip,
+  cfgSize: number,
+): LoadedClip {
   const base = loaded[clip.url];
   base.source.scaleMode = "nearest"; // crisp pixel art
-  return sliceStrip(base, clip.frames, size);
+  const size = clip.size ?? cfgSize;
+  // oversize cell: body block centered → feet at (size/2 + cfgSize/2)
+  const anchorY = size === cfgSize ? 1 : (size / 2 + cfgSize / 2) / size;
+  return { frames: sliceStrip(base, clip.frames, size, clip.row ?? 0), anchorY };
 }
 
 function loadAnimSet(
@@ -65,13 +94,14 @@ function loadAnimSet(
 
 // swap textures only on clip change so animations don't restart every tick
 function play(
-  sprite: AnimatedSprite & { _clip?: Texture[] },
-  clip: Texture[],
+  sprite: AnimatedSprite & { _clip?: LoadedClip },
+  clip: LoadedClip,
   opts: { loop: boolean; speed: number },
 ) {
   if (sprite._clip === clip) return;
   sprite._clip = clip;
-  sprite.textures = clip;
+  sprite.textures = clip.frames;
+  sprite.anchor.y = clip.anchorY;
   sprite.loop = opts.loop;
   sprite.animationSpeed = opts.speed;
   sprite.gotoAndPlay(0);
@@ -80,11 +110,17 @@ function play(
 export default function CombatVisualizer() {
   const hostRef = useRef<HTMLDivElement>(null);
   const heroes = useGuildStore((s) => s.heroes);
+  const bossFight = useGuildStore((s) => s.bossFight);
   const questing = heroes.filter((h) => h.status === "on_quest");
   const questingKey = questing
     .map((h) => h.id)
     .sort()
     .join(",");
+  // boss fights get a dedicated giant-boss scene — key on bossId too so a new
+  // raid with the exact same hero set still rebuilds the scene
+  const sceneKey = bossFight
+    ? `boss-${bossFight.bossId}-${bossFight.heroIds.join(",")}`
+    : questingKey;
 
   // container resize (rotation, breakpoint change) → rebuild scene at new size
   const [sizeKey, setSizeKey] = useState(0);
@@ -104,11 +140,11 @@ export default function CombatVisualizer() {
       ro.disconnect();
       clearTimeout(t);
     };
-  }, [questingKey]);
+  }, [sceneKey]);
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || questingKey === "") return;
+    if (!host || sceneKey === "") return;
 
     // ponytail: full app rebuild per quest-set change; persistent app + scene
     // diffing if WebGL context churn ever shows up
@@ -117,12 +153,21 @@ export default function CombatVisualizer() {
     const app = new Application();
 
     (async () => {
-      const fighters = useGuildStore
-        .getState()
-        .heroes.filter((h) => h.status === "on_quest");
+      const state = useGuildStore.getState();
+      const boss = state.bossFight;
 
-      const heroCfgs = fighters.map((h) => unitAnims("Blue", h.job));
-      const enemyCfgs = fighters.map((h) => monsterAnims(h.id)); // random monster per duel
+      // boss mode: only the raid party + one giant boss + flavor mobs.
+      // regular mode: every on-quest hero gets a 1-vs-1 duel, unchanged.
+      const fighters = boss
+        ? state.heroes.filter((h) => boss.heroIds.includes(h.id))
+        : state.heroes.filter((h) => h.status === "on_quest");
+
+      const heroCfgs = fighters.map((h) => heroCombatAnims(h.job, h.id));
+      const enemyCfgs = boss ? [] : fighters.map((h) => monsterAnims(h.id)); // random monster per duel
+      const bossCfg = boss ? bossCombatAnims(boss.bossId) : null;
+      const mobCfgs = boss
+        ? Array.from({ length: MOB_COUNT }, (_, i) => monsterAnims(`${boss.bossId}-mob-${i}`))
+        : [];
 
       const urls = new Set<string>([
         BACKDROP.tilemap,
@@ -135,7 +180,7 @@ export default function CombatVisualizer() {
         PARTICLES.dust.url,
         PARTICLES.explosion.url,
       ]);
-      for (const cfg of [...heroCfgs, ...enemyCfgs]) {
+      for (const cfg of [...heroCfgs, ...enemyCfgs, ...mobCfgs, ...(bossCfg ? [bossCfg] : [])]) {
         urls.add(cfg.idle.url);
         cfg.attacks.forEach((a) => urls.add(a.url));
         if (cfg.guard) urls.add(cfg.guard.url);
@@ -287,7 +332,7 @@ export default function CombatVisualizer() {
         sc: number,
         mirror: boolean,
       ) => {
-        const s = new AnimatedSprite(anims.idle);
+        const s = new AnimatedSprite(anims.idle.frames);
         s.anchor.set(0.5, 1);
         s.scale.set(mirror ? -sc : sc, sc);
         s.position.set(x, feetY);
@@ -295,7 +340,7 @@ export default function CombatVisualizer() {
         return s;
       };
 
-      const duels = fighters.map((hero, i) => {
+      const duels = boss ? [] : fighters.map((hero, i) => {
         const back = n > 1 && i % 2 === 1; // alternate rows
         const depthScale = back ? BACK_SCALE : 1;
         // front row lower in the band, back row higher (further away)
@@ -354,7 +399,7 @@ export default function CombatVisualizer() {
 
       const spawnParticle = (x: number, y: number, scale: number) => {
         const big = Math.random() < 0.25;
-        const frames = big ? explosionFrames : dustFrames;
+        const frames = big ? explosionFrames.frames : dustFrames.frames;
         const p = new AnimatedSprite(frames);
         p.anchor.set(0.5, big ? 0.7 : 1);
         p.scale.set((big ? baseUnit / 256 : 0.9) * scale);
@@ -366,6 +411,96 @@ export default function CombatVisualizer() {
         app.stage.addChild(p);
       };
 
+      // ── boss mode: one giant boss + crown, party row, flavor mobs ──
+      let bossDuel: {
+        bossSprite: AnimatedSprite;
+        bossAnims: LoadedAnims;
+        bossX: number;
+        bossFeetY: number;
+        heroEntries: { sprite: AnimatedSprite; anims: LoadedAnims; x: number; feetY: number }[];
+        currentHero: number;
+        attacker: Side;
+        attackClip: number;
+        turnStart: number;
+        struck: boolean;
+      } | null = null;
+
+      if (boss && bossCfg) {
+        const bossDef = BOSSES.find((b) => b.id === boss.bossId);
+        const bossUnit = Math.min(baseUnit * (bossCfg.bodyScale ?? 1), H * 0.85, bandH * 1.4);
+        const bossSc = bossUnit / bossCfg.size;
+        const bossFeetY = Math.min(H - 4, Math.max(horizonY + bandH * 0.85, bossUnit + 34));
+        const bossX = W * 0.74;
+        const bossAnims = loadAnimSet(loaded, bossCfg);
+
+        const heroFeetY = horizonY + bandH * 0.82;
+        const availableW = Math.max(60, bossX - bossUnit * 0.5 - 30);
+        const spacing = Math.min(baseUnit * 1.05, availableW / Math.max(1, n));
+        const startX = 20 + spacing * 0.5;
+
+        // flavor mobs — idle-only decoration, seeded so they stay put on resize
+        const mobRand = seededRand(`${boss.bossId}-mobs`);
+        for (const cfg of mobCfgs) {
+          const anims = loadAnimSet(loaded, cfg);
+          const y = horizonY + bandH * (0.28 + mobRand() * 0.22);
+          const x = 24 + mobRand() * (W - 48);
+          const sc = ((baseUnit * 0.4) / cfg.size) * (cfg.bodyScale ?? 1);
+          app.stage.addChild(makeShadow(x, y, baseUnit * 0.22));
+          app.stage.addChild(makeFighter(anims, cfg, x, y, sc, mobRand() < 0.5));
+        }
+
+        const heroEntries = fighters.map((hero, i) => {
+          const x = startX + i * spacing;
+          const heroCfg = heroCfgs[i];
+          const heroAnims = loadAnimSet(loaded, heroCfg);
+          const heroSc = baseUnit / heroCfg.size;
+          app.stage.addChild(makeShadow(x, heroFeetY, baseUnit * 0.5));
+          const sprite = makeFighter(heroAnims, heroCfg, x, heroFeetY, heroSc, false);
+          app.stage.addChild(sprite);
+          const label = new Text({
+            text: `${hero.name} · ${hero.job}`,
+            style: { fill: 0xe2e8f0, fontSize: 10, fontFamily: "monospace" },
+          });
+          label.anchor.set(0.5, 1);
+          label.position.set(x, heroFeetY - baseUnit - 4);
+          app.stage.addChild(label);
+          return { sprite, anims: heroAnims, x, feetY: heroFeetY };
+        });
+
+        app.stage.addChild(makeShadow(bossX, bossFeetY, bossUnit * 0.55));
+        const bossSprite = makeFighter(bossAnims, bossCfg, bossX, bossFeetY, bossSc, true);
+        app.stage.addChild(bossSprite);
+
+        const crown = new Text({
+          text: CROWN_GLYPH,
+          style: { fontSize: Math.round(Math.min(30, bossUnit * 0.22)) },
+        });
+        crown.anchor.set(0.5, 1);
+        crown.position.set(bossX, bossFeetY - bossUnit - 6);
+        app.stage.addChild(crown);
+
+        const bossLabel = new Text({
+          text: bossDef?.name ?? "???",
+          style: { fill: 0xfca5a5, fontSize: 12, fontFamily: "monospace", fontWeight: "bold" },
+        });
+        bossLabel.anchor.set(0.5, 1);
+        bossLabel.position.set(bossX, bossFeetY - bossUnit - 32);
+        app.stage.addChild(bossLabel);
+
+        bossDuel = {
+          bossSprite,
+          bossAnims,
+          bossX,
+          bossFeetY,
+          heroEntries,
+          currentHero: 0,
+          attacker: (Math.random() < 0.5 ? "hero" : "enemy") as Side,
+          attackClip: 0,
+          turnStart: performance.now(),
+          struck: false,
+        };
+      }
+
       app.ticker.add(() => {
         const now = performance.now();
 
@@ -373,6 +508,46 @@ export default function CombatVisualizer() {
         for (const c of clouds) {
           c.x += 0.08;
           if (c.x > W) c.x = -c.width;
+        }
+
+        if (bossDuel) {
+          const bd = bossDuel;
+          const t = now - bd.turnStart;
+          if (t >= 0) {
+            const atk = bd.attacker === "hero";
+            const heroEntry = bd.heroEntries[bd.currentHero];
+            const attacker = atk ? heroEntry.sprite : bd.bossSprite;
+            const defender = atk ? bd.bossSprite : heroEntry.sprite;
+            const aAnims = atk ? heroEntry.anims : bd.bossAnims;
+            const dAnims = atk ? bd.bossAnims : heroEntry.anims;
+            const aHome = atk ? heroEntry.x : bd.bossX;
+            const dHome = atk ? bd.bossX : heroEntry.x;
+            const dir = atk ? 1 : -1;
+
+            if (t < RECOVER_AT) {
+              const clip = aAnims.attacks[bd.attackClip % aAnims.attacks.length];
+              play(attacker, clip, { loop: false, speed: clip.frames.length / 36 });
+              play(defender, dAnims.guard ?? dAnims.idle, { loop: true, speed: 0.2 });
+              const lunge = Math.sin(Math.min(1, t / RECOVER_AT) * Math.PI);
+              attacker.x = aHome + dir * lunge * 22;
+              if (!bd.struck && t >= STRIKE_AT) {
+                bd.struck = true;
+                spawnParticle(dHome - dir * 8, (atk ? bd.bossFeetY : heroEntry.feetY) - 6, 1);
+                defender.x = dHome + dir * 5;
+              }
+            } else if (t < TURN_MS) {
+              play(attacker, aAnims.idle, { loop: true, speed: 0.12 });
+              play(defender, dAnims.idle, { loop: true, speed: 0.12 });
+              attacker.x = aHome;
+              defender.x = dHome;
+            } else {
+              bd.attacker = Math.random() < 0.5 ? "hero" : "enemy";
+              bd.currentHero = Math.floor(Math.random() * bd.heroEntries.length);
+              bd.attackClip++;
+              bd.struck = false;
+              bd.turnStart = now;
+            }
+          }
         }
 
         for (const d of duels) {
@@ -391,7 +566,7 @@ export default function CombatVisualizer() {
           if (t < RECOVER_AT) {
             // attack phase: attacker plays attack clip once, defender guards
             const clip = aAnims.attacks[d.attackClip % aAnims.attacks.length];
-            play(attacker, clip, { loop: false, speed: clip.length / 36 });
+            play(attacker, clip, { loop: false, speed: clip.frames.length / 36 });
             play(defender, dAnims.guard ?? dAnims.idle, { loop: true, speed: 0.2 });
 
             // lunge toward the defender and back (scaled by depth)
@@ -424,7 +599,7 @@ export default function CombatVisualizer() {
       cancelled = true;
       if (ready) app.destroy(true, { children: true }); // free WebGL context
     };
-  }, [questingKey, sizeKey]);
+  }, [sceneKey, sizeKey]);
 
   if (questing.length === 0) {
     return (

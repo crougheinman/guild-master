@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ICONS } from "@/components/assets";
+import BossResultModal from "@/components/BossResultModal";
 import CombatVisualizer from "@/components/CombatVisualizer";
 import Dungeons from "@/components/Dungeons";
 import Forge from "@/components/Forge";
@@ -12,6 +13,7 @@ import RightPanel from "@/components/RightPanel";
 import Settings from "@/components/Settings";
 import Tavern from "@/components/Tavern";
 import Upgrades from "@/components/Upgrades";
+import WelcomeModal from "@/components/WelcomeModal";
 import { useGuildStore, type MaterialKey } from "@/store/useGuildStore";
 
 type Tab =
@@ -66,6 +68,8 @@ export default function Dashboard() {
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-slate-950 text-slate-200 md:grid md:grid-cols-[20%_55%_25%]">
       <GameTicker />
       {hydrated && <MobileChatOverlay />}
+      {hydrated && <BossResultModal />}
+      {hydrated && <WelcomeModal />}
 
       {/* ── Mobile top bar: treasury always visible + settings gear ── */}
       <header className="flex shrink-0 items-center gap-3 border-b border-slate-800 bg-slate-900 px-3 py-2 md:hidden">

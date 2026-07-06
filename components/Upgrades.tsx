@@ -1,6 +1,7 @@
 "use client";
 
 import { ICONS } from "@/components/assets";
+import ModuleHelp from "@/components/ModuleHelp";
 import { UPGRADE_IDS, useGuildStore } from "@/store/useGuildStore";
 
 const UPGRADES = [
@@ -36,7 +37,10 @@ export default function Upgrades() {
   return (
     <div className="p-4">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-100">Guild Hall</h2>
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
+          Guild Hall
+          <ModuleHelp text="Permanent, one-time upgrades paid with gold AND reputation (earned from retiring heroes and boss raids). Each upgrade applies instantly to the whole guild and never expires." />
+        </h2>
         <p className="text-sm text-slate-400">
           Reputation:{" "}
           <span className="font-mono font-semibold tabular-nums text-violet-400">

@@ -6,12 +6,14 @@ import { avatarFor, ICONS } from "@/components/assets";
 import CountdownBar from "@/components/CountdownBar";
 import { RosterChatBubble } from "@/components/HeroChatBubble";
 import ItemIcon from "@/components/ItemIcon";
+import ModuleHelp from "@/components/ModuleHelp";
 import { RARITY_BG, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 import {
   GEAR_SLOTS,
   HEAL_COST,
   RETIRE_REP_PER_LEVEL,
+  rosterCap,
   totalStats,
   useGuildStore,
   type Hero,
@@ -138,7 +140,11 @@ export default function RightPanel() {
   const floatingTexts = useGuildStore((s) => s.floatingTexts);
   const removeFloatingText = useGuildStore((s) => s.removeFloatingText);
   const retireHero = useGuildStore((s) => s.retireHero);
+  const upgrades = useGuildStore((s) => s.upgrades);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const cap = rosterCap(upgrades);
+  const rosterFull = heroes.length >= cap;
 
   return (
     <div className="flex h-full flex-col">
@@ -147,8 +153,21 @@ export default function RightPanel() {
         aria-label="Hero roster"
         className="flex h-[60%] flex-col border-b border-slate-800"
       >
-        <h2 className="border-b border-slate-800 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
+        <h2 className="flex items-center gap-2 border-b border-slate-800 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
           Roster
+          <ModuleHelp text="Your hired heroes. Tap a card to see full stats. Heal costs gold and only works when idle; gear squares show equipped items — tap for details. Retire a hero to free a roster slot and gain reputation." />
+          <span
+            className={`font-mono tabular-nums normal-case tracking-normal ${
+              rosterFull ? "text-rose-400" : "text-slate-600"
+            }`}
+          >
+            {heroes.length}/{cap}
+          </span>
+          {rosterFull && (
+            <span className="rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-400">
+              FULL
+            </span>
+          )}
         </h2>
         <ul className="flex-1 space-y-2 overflow-y-auto p-3">
           {heroes.map((hero) => {

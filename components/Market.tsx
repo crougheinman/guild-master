@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ICONS } from "@/components/assets";
 import ItemIcon from "@/components/ItemIcon";
+import ModuleHelp from "@/components/ModuleHelp";
 import { RARITY_STYLE, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 import {
@@ -62,7 +63,10 @@ export default function Market() {
 
   return (
     <div className="p-4">
-      <h2 className="mb-4 text-lg font-semibold text-slate-100">Guild Shop</h2>
+      <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-100">
+        Guild Shop
+        <ModuleHelp text="Three things happen here: sell surplus materials for gold, buy raid consumables (potions/scrolls) from the Apothecary, and sell Forge-crafted gear — heroes buy it themselves using their own personal wealth, so gear only sells if an idle hero can afford it and wants that slot." />
+      </h2>
 
       {/* ── The tease ── */}
       <section className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">

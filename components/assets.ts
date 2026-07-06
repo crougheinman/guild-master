@@ -54,6 +54,8 @@ export type Team = "Blue" | "Red";
 export interface Clip {
   url: string;
   frames: number;
+  row?: number; // which row of a multi-row grid sheet (0 = single-strip file)
+  size?: number; // per-clip cell override — LPC "oversize" weapon anims are 192px
 }
 
 export interface JobAnims {
@@ -105,6 +107,68 @@ export function unitAnims(team: Team, job: Job): JobAnims {
         attacks: [{ url: `${d}/Pawn_Interact Knife.png`, frames: 4 }],
       };
   }
+}
+
+// ── Heroes/<Job>/<job>-1..4.png — real recolor variants, randomized per hero ──
+// Every sheet is the same 64px LPC universal template (verified by scanning
+// per-row frame counts — identical across all classes/variants): rows come in
+// direction quads ordered up/left/down/right, so RIGHT-facing = quad row +3.
+//   0-3 spellcast(7f) · 4-7 thrust(8f) · 8-11 walk(9f) · 12-15 slash(6f)
+//   16-19 bow-shoot(13f) · 20 hurt(6f) · 22-25 idle(2f) · 38-41 run(8f) ...
+// Weapon art is only baked into some quads (varies per variant) and rows 46+
+// are unclothed template leftovers — the picks below are clothed on all 4
+// variants of every class. No guard clip: row 20 is a collapse-and-die, and
+// looping that as a defend pose reads as dying (defender falls back to idle).
+interface HeroSheetDef {
+  attacks: { row: number; frames: number; size?: number }[];
+  variants?: number[]; // subset when some recolors don't fit the class
+}
+
+const HERO_VARIANTS = [1, 2, 3, 4];
+const HERO_IDLE = { row: 25, frames: 2 }; // idle-right, gentle 2-frame breathe
+
+const HERO_SHEETS: Record<Job, HeroSheetDef> = {
+  Archer: { attacks: [{ row: 19, frames: 13 }] }, // bow nock-draw-release, right
+  // last sheet row = LPC oversize (192px) halberd scythe-arc swing, right
+  Lancer: { attacks: [{ row: 25, frames: 6, size: 192 }] },
+  // monk-3/4 are bare-chested brawler skins on every row — robed variants only
+  Monk: { attacks: [{ row: 3, frames: 7 }], variants: [1, 2] },
+  // last sheet row = oversize axe/machete arc swing, right (warrior-1's
+  // bigger master sheet puts its sword-lunge on a different last row —
+  // special-cased in heroCombatAnims)
+  Warrior: { attacks: [{ row: 21, frames: 6, size: 192 }] },
+  Pawn: { attacks: [{ row: 7, frames: 8 }] }, // spear+shield thrust on -2/3/4
+};
+
+const HERO_CELL = 64;
+
+// stable per-hero variant pick — same hashing idiom as avatarFor, different
+// salt so the portrait and combat sprite don't always correlate
+export function heroVariant(heroId: string, job: Job): number {
+  const pool = HERO_SHEETS[job].variants ?? HERO_VARIANTS;
+  let hash = 0;
+  const seed = `${job}:variant:${heroId}`;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  return pool[Math.abs(hash) % pool.length];
+}
+
+export function heroCombatAnims(job: Job, heroId: string): JobAnims {
+  const sheet = HERO_SHEETS[job];
+  const n = heroVariant(heroId, job);
+  const url = `/game-assets/Heroes/${job}/${job.toLowerCase()}-${n}.png`;
+  // warrior-1's master sheet is taller — its oversize sword-lunge sits on
+  // row 29 (8 frames) instead of the recolors' row 21 (6 frames)
+  const attacks =
+    job === "Warrior" && n === 1
+      ? [{ row: 29, frames: 8, size: 192 }]
+      : sheet.attacks;
+  return {
+    size: HERO_CELL,
+    idle: { url, frames: HERO_IDLE.frames, row: HERO_IDLE.row },
+    attacks: attacks.map((a) => ({ url, ...a })),
+  };
 }
 
 // Orc enemy — 100px frames, faces right (mirror to face the hero). One type.
@@ -167,6 +231,27 @@ export function monsterAnims(seed: string): JobAnims {
   };
   return { size: 16, idle: clip, attacks: [clip], bodyScale: 0.6 };
 }
+
+// giant boss sprite for the raid combat visual — same PNG each boss already
+// ships (reused from BOSS_ART's folder), scaled UP instead of monsterAnims'
+// shrink so it towers over the party.
+const BOSS_MONSTER_PNG: Record<string, string> = {
+  "boss-1": "/game-assets/Enemies/Crushing Cyclops/CrushingCyclops.png",
+  "boss-2": "/game-assets/Enemies/Brawny Ogre/BrawnyOgre.png",
+  "boss-3": "/game-assets/Enemies/Stone Troll/StoneTroll.png",
+  "boss-4": "/game-assets/Enemies/Swamp Troll/SwampTroll.png",
+  "boss-5": "/game-assets/Enemies/Ocular Watcher/OcularWatcher.png",
+  "boss-6": "/game-assets/Enemies/Humongous Ettin/HumongousEttin.png",
+};
+
+export function bossCombatAnims(bossId: string): JobAnims {
+  const clip: Clip = { url: BOSS_MONSTER_PNG[bossId], frames: 4 };
+  return { size: 16, idle: clip, attacks: [clip], bodyScale: 2.4 };
+}
+
+// crown glyph marking the giant boss sprite — canvas text renders emoji fine,
+// no dedicated crown sprite ships in the asset pack
+export const CROWN_GLYPH = "👑";
 
 // ── combat FX + backdrop ──
 export const PARTICLES = {
