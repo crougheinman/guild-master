@@ -1,37 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { DUNGEON_ART } from "@/components/assets";
-import {
-  totalStats,
-  useGuildStore,
-  type Dungeon,
-  type Hero,
-} from "@/store/useGuildStore";
+import HeroPicker from "@/components/HeroPicker";
+import { useGuildStore, type Dungeon } from "@/store/useGuildStore";
 
 const formatDuration = (ms: number) =>
   ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
 
 function DungeonCard({
   dungeon,
-  idleHeroes,
+  onSend,
 }: {
   dungeon: Dungeon;
-  idleHeroes: Hero[];
+  onSend: () => void;
 }) {
-  const dispatchHero = useGuildStore((s) => s.dispatchHero);
-  const [selectedId, setSelectedId] = useState("");
-
-  // selected hero may have been dispatched elsewhere — treat stale pick as none
-  const selection = idleHeroes.find((h) => h.id === selectedId);
-  const selectId = `dispatch-${dungeon.id}`;
-
-  const handleDispatch = () => {
-    if (!selection) return;
-    dispatchHero(selection.id, dungeon.id);
-    setSelectedId("");
-  };
-
   const art = DUNGEON_ART[dungeon.id];
 
   return (
@@ -47,53 +31,27 @@ function DungeonCard({
         </div>
       )}
       <div className="p-4">
-      <div className="flex items-baseline justify-between">
-        <h3 className="font-medium text-slate-100">{dungeon.name}</h3>
-        <span className="font-mono text-xs tabular-nums text-slate-400">
-          {formatDuration(dungeon.base_duration_ms)}
-        </span>
-      </div>
-      <p className="mt-1 text-sm text-slate-400">
-        Threat level{" "}
-        <span className="font-mono tabular-nums text-rose-400">
-          {dungeon.threat_level}
-        </span>
-      </p>
-
-      <div className="mt-3 flex items-end gap-2">
-        <div className="flex-1">
-          <label
-            htmlFor={selectId}
-            className="mb-1 block text-xs font-medium text-slate-500"
-          >
-            Send hero
-          </label>
-          <select
-            id={selectId}
-            value={selection ? selectedId : ""}
-            onChange={(e) => setSelectedId(e.target.value)}
-            disabled={idleHeroes.length === 0}
-            className="min-h-10 w-full cursor-pointer rounded-md border border-slate-700 bg-slate-800 px-2 text-sm text-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <option value="">
-              {idleHeroes.length === 0 ? "No idle heroes" : "Choose…"}
-            </option>
-            {idleHeroes.map((h) => (
-              <option key={h.id} value={h.id}>
-                {h.name} (Pow {totalStats(h).power}, Spd {totalStats(h).speed})
-              </option>
-            ))}
-          </select>
+        <div className="flex items-baseline justify-between">
+          <h3 className="font-medium text-slate-100">{dungeon.name}</h3>
+          <span className="font-mono text-xs tabular-nums text-slate-400">
+            {formatDuration(dungeon.base_duration_ms)}
+          </span>
         </div>
+        <p className="mt-1 text-sm text-slate-400">
+          Threat level{" "}
+          <span className="font-mono tabular-nums text-rose-400">
+            {dungeon.threat_level}
+          </span>
+        </p>
+
+        {/* stays enabled with 0 idle heroes — the picker shows WHY nobody can go */}
         <button
           type="button"
-          onClick={handleDispatch}
-          disabled={!selection}
-          className="min-h-10 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={onSend}
+          className="mt-3 min-h-12 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
         >
-          Dispatch
+          Send Hero
         </button>
-      </div>
       </div>
     </li>
   );
@@ -101,17 +59,28 @@ function DungeonCard({
 
 export default function Dungeons() {
   const dungeons = useGuildStore((s) => s.dungeons);
-  const heroes = useGuildStore((s) => s.heroes);
-  const idleHeroes = heroes.filter((h) => h.status === "idle");
+  const [pickerDungeon, setPickerDungeon] = useState<Dungeon | null>(null);
 
   return (
     <div className="p-4">
       <h2 className="mb-4 text-lg font-semibold text-slate-100">Dungeons</h2>
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {dungeons.map((d) => (
-          <DungeonCard key={d.id} dungeon={d} idleHeroes={idleHeroes} />
+          <DungeonCard
+            key={d.id}
+            dungeon={d}
+            onSend={() => setPickerDungeon(d)}
+          />
         ))}
       </ul>
+      <AnimatePresence>
+        {pickerDungeon && (
+          <HeroPicker
+            dungeon={pickerDungeon}
+            onClose={() => setPickerDungeon(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

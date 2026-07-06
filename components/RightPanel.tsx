@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { avatarFor, ICONS } from "@/components/assets";
 import CountdownBar from "@/components/CountdownBar";
 import { RosterChatBubble } from "@/components/HeroChatBubble";
+import ItemIcon from "@/components/ItemIcon";
 import { RARITY_BG, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 import {
@@ -17,13 +18,13 @@ import {
   type HeroStatus,
 } from "@/store/useGuildStore";
 
-const STATUS_LABEL: Record<HeroStatus, { text: string; className: string }> = {
+export const STATUS_LABEL: Record<HeroStatus, { text: string; className: string }> = {
   idle: { text: "idle", className: "text-emerald-400" },
   on_quest: { text: "questing", className: "text-sky-400" },
   injured: { text: "resting", className: "text-rose-400" },
 };
 
-function hpBarColor(pct: number) {
+export function hpBarColor(pct: number) {
   if (pct > 50) return "bg-emerald-500";
   if (pct > 25) return "bg-amber-500";
   return "bg-rose-500";
@@ -86,12 +87,14 @@ function GearSlots({ hero }: { hero: Hero }) {
             }
           >
             <span
-              className={`block size-4 rounded-sm border ${
+              className={`flex size-5 items-center justify-center rounded-sm border ${
                 item
                   ? `${RARITY_BG[item.rarity]} border-slate-950/40`
                   : "border-slate-700 bg-slate-800/60"
               }`}
-            />
+            >
+              {item && <ItemIcon subType={item.subType} size={16} />}
+            </span>
           </Tooltip>
         );
       })}

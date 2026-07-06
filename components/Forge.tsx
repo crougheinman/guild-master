@@ -9,6 +9,7 @@ import {
   type SubType,
 } from "@/store/useGuildStore";
 import { ICONS } from "@/components/assets";
+import ItemIcon from "@/components/ItemIcon";
 import { RARITY_STYLE, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 
@@ -60,12 +61,13 @@ export default function Forge() {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setSelected(st)}
-                className={`min-h-9 cursor-pointer rounded-md border px-3 text-xs font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
+                className={`flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-xs font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
                   active
                     ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
                     : "border-slate-700 text-slate-400 hover:bg-slate-800"
                 }`}
               >
+                <ItemIcon subType={st} size={20} />
                 {st}
               </button>
             );
@@ -137,10 +139,13 @@ export default function Forge() {
               >
                 <Tooltip text={rarityBlurb(item)}>
                   <div className="p-3">
-                    <p className="truncate text-sm font-medium">
-                      {item.prefix ? `${item.prefix} ` : ""}
-                      {item.name}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <ItemIcon subType={item.subType} size={24} />
+                      <p className="truncate text-sm font-medium">
+                        {item.prefix ? `${item.prefix} ` : ""}
+                        {item.name}
+                      </p>
+                    </div>
                     <p className="mt-1 text-xs capitalize opacity-75">
                       {item.rarity} {item.subType}
                     </p>

@@ -15,6 +15,26 @@ export const ICONS = {
   roster: `${UI}/Human Avatars/Avatars_01.png`, // helm portrait
 } as const;
 
+// ── item icons: 16×16 cells in the Others sheet ──
+import type { SubType } from "@/store/useGuildStore";
+
+export const ITEM_SHEET = {
+  url: "/game-assets/Others/others.png",
+  w: 256,
+  h: 2192,
+  cell: 16,
+} as const;
+
+// col/row of the best-reading cell per craftable subtype
+export const ITEM_ICONS: Record<SubType, { col: number; row: number }> = {
+  dagger: { col: 1, row: 100 }, // blue knife
+  sword: { col: 3, row: 99 }, // gold broadsword
+  staff: { col: 6, row: 18 }, // orb scepter
+  armor: { col: 0, row: 116 }, // blue chestplate
+  boots: { col: 4, row: 121 }, // red boots
+  ring: { col: 5, row: 7 }, // gold ring
+};
+
 export const DUNGEON_ART: Record<string, string> = {
   "dungeon-1": "/game-assets/Buildings/Red Buildings/Tower.png", // Goblin Cave
   "dungeon-2": "/game-assets/Buildings/Red Buildings/Barracks.png", // Bandit Camp

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ICONS } from "@/components/assets";
+import ItemIcon from "@/components/ItemIcon";
 import { RARITY_STYLE, rarityBlurb, statLine } from "@/components/rarity";
 import Tooltip from "@/components/Tooltip";
 import {
@@ -126,11 +127,14 @@ export default function Market() {
                 className={`rounded-md border bg-slate-900 p-3 ${RARITY_STYLE[item.rarity]}`}
               >
                 <Tooltip text={rarityBlurb(item)}>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <p className="truncate text-sm font-medium">
-                      {item.prefix ? `${item.prefix} ` : ""}
-                      {item.name}
-                    </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ItemIcon subType={item.subType} size={24} />
+                      <p className="truncate text-sm font-medium">
+                        {item.prefix ? `${item.prefix} ` : ""}
+                        {item.name}
+                      </p>
+                    </span>
                     <span className="shrink-0 font-mono text-xs tabular-nums text-amber-400">
                       {item.price}g
                     </span>
