@@ -295,6 +295,9 @@ interface GuildState {
   shadyMerchantExpiresAt: number; // epoch ms — merchant vanishes on the tick past this
   shadyMerchantInventory: Item[];
   shadyMerchantSeenVisit: number; // expiresAt of the visit the player dismissed (0 = none)
+  // permanent account progression — survives every hero, never resets
+  retiredHeroes: { id: string; name: string; class: string; level: number }[];
+  prestigeBuffs: { globalAttackBonus: number; startingLevel: number };
   marketRates: MarketRates;
 
   dispatchHero: (heroId: string, dungeonId: string) => void;
@@ -380,6 +383,8 @@ const applyRaidRelationships = (
 
 // Add exp and run the level-up loop. Pure — returns a new hero + any level
 // logs. Each level: +power, +maxFortitude, full heal, +2% greed (Ego Tax).
+// Hard-capped at MAX_HERO_LEVEL — a capped hero pools exp and is eligible to
+// retire as a Legend (Hall of Fame + permanent prestige buffs).
 const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => {
   let { level, exp, expToNext } = hero;
   let { power, max_fortitude, fortitude } = hero.stats;
@@ -387,7 +392,7 @@ const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => 
   const logs: string[] = [];
 
   exp += amount;
-  while (exp >= expToNext) {
+  while (exp >= expToNext && level < MAX_HERO_LEVEL) {
     exp -= expToNext;
     level += 1;
     expToNext = Math.floor(Math.pow(level, 2) * 100);
@@ -396,7 +401,9 @@ const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => 
     fortitude = max_fortitude; // fully restore
     greed = Math.min(GREED_CAP, greed + 0.02);
     logs.push(
-      `${hero.name} leveled up to ${level}! Greed increased to ${Math.round(greed * 100)}%`,
+      level === MAX_HERO_LEVEL
+        ? `${hero.name} reached the level cap (${MAX_HERO_LEVEL})! They can now retire as a Legend.`
+        : `${hero.name} leveled up to ${level}! Greed increased to ${Math.round(greed * 100)}%`,
     );
   }
 
@@ -417,6 +424,11 @@ export const HEAL_COST = 50;
 export const HIRE_COST = 100;
 export const GREEDY_MIN_PRICE = 100;
 export const RETIRE_REP_PER_LEVEL = 50;
+// ── Lineage & Retirement prestige ──
+export const MAX_HERO_LEVEL = 50;
+export const LEGEND_ATTACK_BONUS = 0.02; // +2% global attack per retired Legend
+// startingLevel is +1 per Legend, uncapped — reaching Lv50 takes ~2M exp per
+// hero, so the earn rate self-limits how fast this snowballs
 export const BASE_ROSTER_CAP = 3;
 // per-unit base sale price, multiplied by the live market rate
 export const MATERIAL_BASE_PRICE: Record<MaterialKey, number> = {
@@ -613,19 +625,27 @@ const sanitizeHero = (h: Hero): Hero => {
 };
 
 let heroSeq = 0;
-const rollCandidate = (): Hero => {
-  const fortitude = randInt([40, 60]);
+// startingLevel comes from prestigeBuffs — Legacy recruits spawn pre-leveled,
+// using the same per-level gain rolls as gainExp so they aren't stat-cheated
+const rollCandidate = (startingLevel = 1): Hero => {
+  const level = Math.max(1, Math.min(MAX_HERO_LEVEL, Math.round(startingLevel)));
+  let power = randInt([5, 15]);
+  let maxFort = randInt([40, 60]);
+  for (let l = 2; l <= level; l++) {
+    power += randInt([2, 4]);
+    maxFort += randInt([10, 20]);
+  }
   return {
     id: `hero-${Date.now()}-${heroSeq++}`,
     name: CANDIDATE_NAMES[randInt([0, CANDIDATE_NAMES.length - 1])],
     job: JOBS[randInt([0, JOBS.length - 1])],
-    level: 1,
+    level,
     exp: 0,
-    expToNext: 100,
+    expToNext: Math.floor(Math.pow(level, 2) * 100), // same curve gainExp uses on arrival at `level`
     stats: {
-      power: randInt([5, 15]),
-      fortitude,
-      max_fortitude: fortitude,
+      power,
+      fortitude: maxFort,
+      max_fortitude: maxFort,
       speed: randInt([8, 15]) / 10, // 0.8–1.5
     },
     attr: {
@@ -662,6 +682,8 @@ type GuildData = Pick<
   | "shadyMerchantExpiresAt"
   | "shadyMerchantInventory"
   | "shadyMerchantSeenVisit"
+  | "retiredHeroes"
+  | "prestigeBuffs"
   | "marketRates"
   | "heroes"
   | "tavernCandidates"
@@ -692,6 +714,8 @@ const initialState = (): GuildData => ({
   shadyMerchantExpiresAt: 0,
   shadyMerchantInventory: [],
   shadyMerchantSeenVisit: 0,
+  retiredHeroes: [],
+  prestigeBuffs: { globalAttackBonus: 0, startingLevel: 1 },
   marketRates: { organics: 1, minerals: 1, botanicals: 1 },
 
   heroes: [
@@ -1008,7 +1032,10 @@ export const useGuildStore = create<GuildState>()(
           }
         }
         const partyDmg = Math.round(
-          living.reduce((sum, h) => sum + totalStats(h).power, 0) * fight.hasteMul * (1 + synergyMod),
+          living.reduce((sum, h) => sum + totalStats(h).power, 0) *
+            fight.hasteMul *
+            (1 + synergyMod) *
+            (1 + get().prestigeBuffs.globalAttackBonus), // Legends watch over the guild
         );
         const bossHp = fight.bossHp - partyDmg;
 
@@ -1198,16 +1225,34 @@ export const useGuildStore = create<GuildState>()(
       },
 
       retireHero: (heroId) => {
-        const { heroes, ledger, addLog } = get();
+        const { heroes, ledger, retiredHeroes, prestigeBuffs, addLog } = get();
         const hero = heroes.find((h) => h.id === heroId);
         if (!hero || hero.status === "on_quest") return;
 
         const rep = hero.level * RETIRE_REP_PER_LEVEL;
+        // a level-capped hero retires as a Legend: Hall of Fame entry plus
+        // permanent, account-wide prestige buffs on top of the usual rep
+        const isLegend = hero.level >= MAX_HERO_LEVEL;
         set({
           heroes: heroes.filter((h) => h.id !== heroId),
           ledger: { ...ledger, reputation: ledger.reputation + rep },
+          ...(isLegend && {
+            retiredHeroes: [
+              ...retiredHeroes,
+              { id: hero.id, name: hero.name, class: hero.job, level: hero.level },
+            ],
+            prestigeBuffs: {
+              globalAttackBonus:
+                Math.round((prestigeBuffs.globalAttackBonus + LEGEND_ATTACK_BONUS) * 100) / 100,
+              startingLevel: prestigeBuffs.startingLevel + 1,
+            },
+          }),
         });
-        addLog(`${hero.name} retired with honors. +${rep} reputation.`);
+        addLog(
+          isLegend
+            ? `${hero.name} enters the Hall of Fame! +${rep} reputation, +2% guild attack, recruits now start at Lv ${prestigeBuffs.startingLevel + 1}.`
+            : `${hero.name} retired with honors. +${rep} reputation.`,
+        );
       },
 
       buyUpgrade: (upgradeId, cost) => {
@@ -1590,7 +1635,8 @@ export const useGuildStore = create<GuildState>()(
       },
 
       refreshTavern: () => {
-        set({ tavernCandidates: [rollCandidate(), rollCandidate(), rollCandidate()] });
+        const lvl = get().prestigeBuffs.startingLevel;
+        set({ tavernCandidates: [rollCandidate(lvl), rollCandidate(lvl), rollCandidate(lvl)] });
       },
 
       hireHero: (candidateId) => {
@@ -1696,8 +1742,8 @@ export const useGuildStore = create<GuildState>()(
           const fx = heroEffects(hero);
           const totals = totalStats(hero); // includes gear bonuses + monocle penalty
           const effectivePower =
-            totals.power +
-            (state.upgrades.includes(UPGRADE_IDS.sharpening) ? 5 : 0);
+            (totals.power + (state.upgrades.includes(UPGRADE_IDS.sharpening) ? 5 : 0)) *
+            (1 + state.prestigeBuffs.globalAttackBonus);
           const successChance = (effectivePower / dungeon.threat_level) * 100;
           const success = Math.random() * 100 < successChance;
           const effectiveGreed = Math.max(

@@ -8,6 +8,7 @@ import Dungeons from "@/components/Dungeons";
 import Forge from "@/components/Forge";
 import GameTicker from "@/components/GameTicker";
 import GuildHallScreen from "@/components/GuildHallScreen";
+import HallOfFame from "@/components/HallOfFame";
 import { MobileChatOverlay } from "@/components/HeroChatBubble";
 import Market from "@/components/Market";
 import RightPanel from "@/components/RightPanel";
@@ -186,6 +187,7 @@ export default function Dashboard() {
             <>
               <GuildHallScreen />
               <Upgrades />
+              <HallOfFame />
             </>
           ) : activeTab === "roster" ? (
             // mobile: roster + logs take over the main area;

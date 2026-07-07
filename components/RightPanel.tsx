@@ -12,6 +12,7 @@ import Tooltip from "@/components/Tooltip";
 import {
   GEAR_SLOTS,
   HEAL_COST,
+  MAX_HERO_LEVEL,
   NEGATIVE_TRAITS,
   POSITIVE_TRAITS,
   RETIRE_REP_PER_LEVEL,
@@ -158,7 +159,7 @@ export default function RightPanel() {
       >
         <h2 className="flex items-center gap-2 border-b border-slate-800 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
           Roster
-          <ModuleHelp text="Your hired heroes. Tap a card to see full stats. Heal costs gold and only works when idle; gear squares show equipped items — tap for details. Each hero has a positive and negative trait shown next to their name — hover a trait for what it does. Retire a hero to free a roster slot and gain reputation." />
+          <ModuleHelp text="Your hired heroes. Tap a card to see full stats. Heal costs gold and only works when idle; gear squares show equipped items — tap for details. Each hero has a positive and negative trait shown next to their name — hover a trait for what it does. Retire a hero to free a roster slot and gain reputation — heroes at the level cap retire as Legends, permanently buffing the whole guild (see the Hall of Fame in the Guild Hall)." />
           <span
             className={`font-mono tabular-nums normal-case tracking-normal ${
               rosterFull ? "text-rose-400" : "text-slate-600"
@@ -344,19 +345,33 @@ export default function RightPanel() {
                       Heal ({healCost}g)
                     </button>
                   )}
-                  {hero.status === "idle" && (
-                    <Tooltip
-                      text={`Retire ${hero.name} for +${hero.level * RETIRE_REP_PER_LEVEL} reputation. Permanent.`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => retireHero(hero.id)}
-                        className="min-h-9 w-full cursor-pointer rounded-md border border-rose-500/40 bg-rose-500/10 px-2 text-xs font-medium text-rose-400 transition-colors hover:bg-rose-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                  {hero.status === "idle" &&
+                    (hero.level >= MAX_HERO_LEVEL ? (
+                      // level cap reached — retirement now grants prestige
+                      <Tooltip
+                        text={`Retire ${hero.name} as a LEGEND: +${hero.level * RETIRE_REP_PER_LEVEL} reputation, +2% guild attack forever, and future recruits start 1 level higher. Permanent.`}
                       >
-                        Retire
-                      </button>
-                    </Tooltip>
-                  )}
+                        <button
+                          type="button"
+                          onClick={() => retireHero(hero.id)}
+                          className="min-h-9 w-full cursor-pointer rounded-md border border-yellow-500/50 bg-yellow-500/10 px-2 text-xs font-semibold text-yellow-400 transition-colors hover:bg-yellow-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-400"
+                        >
+                          ★ Retire as Legend
+                        </button>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip
+                        text={`Retire ${hero.name} for +${hero.level * RETIRE_REP_PER_LEVEL} reputation. Permanent. Reach Lv ${MAX_HERO_LEVEL} first to retire as a Legend with lasting guild buffs.`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => retireHero(hero.id)}
+                          className="min-h-9 w-full cursor-pointer rounded-md border border-rose-500/40 bg-rose-500/10 px-2 text-xs font-medium text-rose-400 transition-colors hover:bg-rose-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                        >
+                          Retire
+                        </button>
+                      </Tooltip>
+                    ))}
                 </div>
               </li>
             );

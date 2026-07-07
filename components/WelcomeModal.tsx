@@ -10,7 +10,7 @@ const STEPS = [
   { label: "Dungeons", desc: "Send idle heroes to quest for gold and materials, raid a boss as a party, or dispatch offline expeditions from the Bounty Board." },
   { label: "Forge", desc: "Turn materials into gear — rarity and stats roll at random." },
   { label: "Guild Shop", desc: "Sell materials for gold, buy raid potions, or sell gear to your own heroes." },
-  { label: "Roster", desc: "Manage your heroes: heal, check stats, equip gear, or retire for reputation." },
+  { label: "Roster", desc: "Manage your heroes: heal, check stats, equip gear, or retire for reputation. Max-level heroes retire as Legends with permanent guild-wide buffs." },
 ];
 
 // One-time first-launch overview of the game loop. Every module also has its
