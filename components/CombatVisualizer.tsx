@@ -68,27 +68,104 @@ function sliceStrip(base: Texture, frames: number, size: number, row = 0): Textu
   );
 }
 
+// mobile GPUs commonly cap textures at 4096px — the hero master sheets are up
+// to 5760px tall and upload as a black box there. For oversized sources, copy
+// just the needed row into a small canvas and texture THAT instead.
+//
+// The row is extracted from an independently-fetched <img>, NOT from the
+// Pixi-managed texture's own resource: Pixi's image loader decodes to an
+// ImageBitmap and may transfer/close it once uploaded to the GPU, and
+// drawImage() on a closed ImageBitmap throws "the image source is detached"
+// — silently breaking the whole scene build with no visible console error
+// bridge to catch it. A plain Image() is decoupled from that lifecycle and
+// the browser serves it from cache instantly (same URL, already fetched).
+const MAX_GPU_TEX = 4096;
+const rawImageCache = new Map<string, Promise<HTMLImageElement>>();
+
+function loadRawImage(url: string): Promise<HTMLImageElement> {
+  let p = rawImageCache.get(url);
+  if (!p) {
+    p = new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+    rawImageCache.set(url, p);
+  }
+  return p;
+}
+
+function extractRow(img: HTMLImageElement, frames: number, size: number, row: number): Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = frames * size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    img,
+    0, row * size, frames * size, size,
+    0, 0, frames * size, size,
+  );
+  const tex = Texture.from(canvas);
+  tex.source.scaleMode = "nearest";
+  return tex;
+}
+
+// pre-extract every oversized clip's row into its own small texture, once,
+// before the scene is built — sliceClip then does a plain synchronous lookup
+async function preloadOversizeRows(
+  loaded: Record<string, Texture>,
+  cfgs: JobAnims[],
+): Promise<Map<string, Texture>> {
+  const jobs: { key: string; url: string; size: number; row: number; frames: number }[] = [];
+  for (const cfg of cfgs) {
+    for (const clip of [cfg.idle, ...cfg.attacks, ...(cfg.guard ? [cfg.guard] : [])]) {
+      const base = loaded[clip.url];
+      if (base.source.pixelWidth <= MAX_GPU_TEX && base.source.pixelHeight <= MAX_GPU_TEX) continue;
+      const size = clip.size ?? cfg.size;
+      const row = clip.row ?? 0;
+      jobs.push({ key: `${clip.url}#${row}#${size}`, url: clip.url, size, row, frames: clip.frames });
+    }
+  }
+  const extracted = new Map<string, Texture>();
+  await Promise.all(
+    jobs.map(async (j) => {
+      if (extracted.has(j.key)) return;
+      const img = await loadRawImage(j.url);
+      extracted.set(j.key, extractRow(img, j.frames, j.size, j.row));
+    }),
+  );
+  return extracted;
+}
+
 function sliceClip(
   loaded: Record<string, Texture>,
   clip: Clip,
   cfgSize: number,
+  extracted: Map<string, Texture>,
 ): LoadedClip {
   const base = loaded[clip.url];
   base.source.scaleMode = "nearest"; // crisp pixel art
   const size = clip.size ?? cfgSize;
   // oversize cell: body block centered → feet at (size/2 + cfgSize/2)
   const anchorY = size === cfgSize ? 1 : (size / 2 + cfgSize / 2) / size;
-  return { frames: sliceStrip(base, clip.frames, size, clip.row ?? 0), anchorY };
+
+  const row = clip.row ?? 0;
+  const pre = extracted.get(`${clip.url}#${row}#${size}`);
+  const strip = pre ?? base;
+  return { frames: sliceStrip(strip, clip.frames, size, pre ? 0 : row), anchorY };
 }
 
 function loadAnimSet(
   loaded: Record<string, Texture>,
   cfg: JobAnims,
+  extracted: Map<string, Texture>,
 ): LoadedAnims {
   return {
-    idle: sliceClip(loaded, cfg.idle, cfg.size),
-    attacks: cfg.attacks.map((a) => sliceClip(loaded, a, cfg.size)),
-    guard: cfg.guard ? sliceClip(loaded, cfg.guard, cfg.size) : null,
+    idle: sliceClip(loaded, cfg.idle, cfg.size, extracted),
+    attacks: cfg.attacks.map((a) => sliceClip(loaded, a, cfg.size, extracted)),
+    guard: cfg.guard ? sliceClip(loaded, cfg.guard, cfg.size, extracted) : null,
   };
 }
 
@@ -186,6 +263,14 @@ export default function CombatVisualizer() {
         if (cfg.guard) urls.add(cfg.guard.url);
       }
       const loaded: Record<string, Texture> = await Assets.load([...urls]);
+      if (cancelled) return;
+
+      const extracted = await preloadOversizeRows(loaded, [
+        ...heroCfgs,
+        ...enemyCfgs,
+        ...mobCfgs,
+        ...(bossCfg ? [bossCfg] : []),
+      ]);
       if (cancelled) return;
 
       const W = host.clientWidth || 700;
@@ -308,8 +393,8 @@ export default function CombatVisualizer() {
       // ── duels, staggered front↔back for depth ──
       const shadowTex = loaded[BACKDROP.shadow];
       shadowTex.source.scaleMode = "nearest";
-      const dustFrames = sliceClip(loaded, { url: PARTICLES.dust.url, frames: PARTICLES.dust.frames }, PARTICLES.dust.size);
-      const explosionFrames = sliceClip(loaded, { url: PARTICLES.explosion.url, frames: PARTICLES.explosion.frames }, PARTICLES.explosion.size);
+      const dustFrames = sliceClip(loaded, { url: PARTICLES.dust.url, frames: PARTICLES.dust.frames }, PARTICLES.dust.size, extracted);
+      const explosionFrames = sliceClip(loaded, { url: PARTICLES.explosion.url, frames: PARTICLES.explosion.frames }, PARTICLES.explosion.size, extracted);
 
       const n = fighters.length;
       // one shared unit height so hero + orc read at consistent scale
@@ -357,8 +442,8 @@ export default function CombatVisualizer() {
 
         const heroCfg = heroCfgs[i];
         const enemyCfg = enemyCfgs[i];
-        const heroAnims = loadAnimSet(loaded, heroCfg);
-        const enemyAnims = loadAnimSet(loaded, enemyCfg);
+        const heroAnims = loadAnimSet(loaded, heroCfg, extracted);
+        const enemyAnims = loadAnimSet(loaded, enemyCfg, extracted);
         const heroSc = (baseUnit / heroCfg.size) * depthScale;
         const enemySc =
           (baseUnit / enemyCfg.size) * (enemyCfg.bodyScale ?? 1) * depthScale;
@@ -431,7 +516,7 @@ export default function CombatVisualizer() {
         const bossSc = bossUnit / bossCfg.size;
         const bossFeetY = Math.min(H - 4, Math.max(horizonY + bandH * 0.85, bossUnit + 34));
         const bossX = W * 0.74;
-        const bossAnims = loadAnimSet(loaded, bossCfg);
+        const bossAnims = loadAnimSet(loaded, bossCfg, extracted);
 
         const heroFeetY = horizonY + bandH * 0.82;
         const availableW = Math.max(60, bossX - bossUnit * 0.5 - 30);
@@ -441,7 +526,7 @@ export default function CombatVisualizer() {
         // flavor mobs — idle-only decoration, seeded so they stay put on resize
         const mobRand = seededRand(`${boss.bossId}-mobs`);
         for (const cfg of mobCfgs) {
-          const anims = loadAnimSet(loaded, cfg);
+          const anims = loadAnimSet(loaded, cfg, extracted);
           const y = horizonY + bandH * (0.28 + mobRand() * 0.22);
           const x = 24 + mobRand() * (W - 48);
           const sc = ((baseUnit * 0.4) / cfg.size) * (cfg.bodyScale ?? 1);
@@ -452,7 +537,7 @@ export default function CombatVisualizer() {
         const heroEntries = fighters.map((hero, i) => {
           const x = startX + i * spacing;
           const heroCfg = heroCfgs[i];
-          const heroAnims = loadAnimSet(loaded, heroCfg);
+          const heroAnims = loadAnimSet(loaded, heroCfg, extracted);
           const heroSc = baseUnit / heroCfg.size;
           app.stage.addChild(makeShadow(x, heroFeetY, baseUnit * 0.5));
           const sprite = makeFighter(heroAnims, heroCfg, x, heroFeetY, heroSc, false);
