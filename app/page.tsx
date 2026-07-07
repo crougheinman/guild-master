@@ -7,6 +7,7 @@ import CombatVisualizer from "@/components/CombatVisualizer";
 import Dungeons from "@/components/Dungeons";
 import Forge from "@/components/Forge";
 import GameTicker from "@/components/GameTicker";
+import GuildHallScreen from "@/components/GuildHallScreen";
 import { MobileChatOverlay } from "@/components/HeroChatBubble";
 import Market from "@/components/Market";
 import RightPanel from "@/components/RightPanel";
@@ -180,7 +181,10 @@ export default function Dashboard() {
           ) : activeTab === "market" ? (
             <Market />
           ) : activeTab === "guild" ? (
-            <Upgrades />
+            <>
+              <GuildHallScreen />
+              <Upgrades />
+            </>
           ) : activeTab === "roster" ? (
             // mobile: roster + logs take over the main area;
             // desktop already shows them in the right panel — show Tavern instead

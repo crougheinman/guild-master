@@ -12,6 +12,8 @@ import Tooltip from "@/components/Tooltip";
 import {
   GEAR_SLOTS,
   HEAL_COST,
+  NEGATIVE_TRAITS,
+  POSITIVE_TRAITS,
   RETIRE_REP_PER_LEVEL,
   rosterCap,
   totalStats,
@@ -155,7 +157,7 @@ export default function RightPanel() {
       >
         <h2 className="flex items-center gap-2 border-b border-slate-800 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
           Roster
-          <ModuleHelp text="Your hired heroes. Tap a card to see full stats. Heal costs gold and only works when idle; gear squares show equipped items — tap for details. Retire a hero to free a roster slot and gain reputation." />
+          <ModuleHelp text="Your hired heroes. Tap a card to see full stats. Heal costs gold and only works when idle; gear squares show equipped items — tap for details. Each hero has a positive and negative trait shown next to their name — hover a trait for what it does. Retire a hero to free a roster slot and gain reputation." />
           <span
             className={`font-mono tabular-nums normal-case tracking-normal ${
               rosterFull ? "text-rose-400" : "text-slate-600"
@@ -175,7 +177,8 @@ export default function RightPanel() {
             const maxFort = totalStats(hero).maxFortitude; // armor counts
             const pct = Math.round((fortitude / maxFort) * 100);
             const hurt = fortitude < maxFort;
-            const canAfford = gold >= HEAL_COST;
+            const healCost = hero.traits.negative === "glutton" ? HEAL_COST * 2 : HEAL_COST;
+            const canAfford = gold >= healCost;
             const status = STATUS_LABEL[hero.status];
             const quest = activeQuests.find((q) => q.heroId === hero.id);
             const questDungeon = quest
@@ -223,8 +226,20 @@ export default function RightPanel() {
                       height={36}
                       className="pixel size-9 shrink-0 rounded-md border border-slate-700 bg-slate-800"
                     />
-                    <span className="truncate text-sm font-medium text-slate-100">
-                      {hero.name}
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                      <span className="truncate text-sm font-medium text-slate-100">
+                        {hero.name}
+                      </span>
+                      <Tooltip text={POSITIVE_TRAITS[hero.traits.positive].blurb}>
+                        <span className="shrink-0 rounded bg-emerald-900/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                          {POSITIVE_TRAITS[hero.traits.positive].name}
+                        </span>
+                      </Tooltip>
+                      <Tooltip text={NEGATIVE_TRAITS[hero.traits.negative].blurb}>
+                        <span className="shrink-0 rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] font-medium text-rose-300">
+                          {NEGATIVE_TRAITS[hero.traits.negative].name}
+                        </span>
+                      </Tooltip>
                     </span>
                     <span className="ml-auto shrink-0 text-xs text-slate-500">
                       Lv {hero.level} · {hero.job}
@@ -316,10 +331,10 @@ export default function RightPanel() {
                       type="button"
                       onClick={() => healHero(hero.id)}
                       disabled={!canAfford}
-                      title={canAfford ? undefined : `Need ${HEAL_COST} gold`}
+                      title={canAfford ? undefined : `Need ${healCost} gold`}
                       className="min-h-9 flex-1 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      Heal ({HEAL_COST}g)
+                      Heal ({healCost}g)
                     </button>
                   )}
                   {hero.status === "idle" && (

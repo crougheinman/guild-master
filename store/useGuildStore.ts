@@ -58,6 +58,21 @@ export const EFFECTS: Record<EffectId, { name: string; blurb: string }> = {
   },
 };
 
+export type PositiveTraitId = "resilient" | "thrifty" | "lucky";
+export type NegativeTraitId = "coward" | "greedy" | "glutton";
+
+export const POSITIVE_TRAITS: Record<PositiveTraitId, { name: string; blurb: string }> = {
+  resilient: { name: "Resilient", blurb: "+10% max HP." },
+  thrifty: { name: "Thrifty", blurb: "Pays 20% less for shop gear." },
+  lucky: { name: "Lucky", blurb: "+10% scavenging yield." },
+};
+
+export const NEGATIVE_TRAITS: Record<NegativeTraitId, { name: string; blurb: string }> = {
+  coward: { name: "Coward", blurb: "Flees boss fights below 40% HP, ignoring potions." },
+  greedy: { name: "Greedy", blurb: "Refuses shop gear priced under 100g." },
+  glutton: { name: "Glutton", blurb: "Costs 2x gold to hire and to heal." },
+};
+
 // stat bonuses an item can carry (scavenge adds to attr.scavenge_multiplier)
 export interface ItemStats {
   power?: number;
@@ -90,7 +105,7 @@ export interface Hero {
   // note: currentFortitude/maxFortitude live on stats as fortitude/max_fortitude
   stats: HeroStats;
   attr: HeroAttr; // greed is a 0..1 fraction — Ego Tax adds 0.02, caps at 0.80
-  traits: string[];
+  traits: { positive: PositiveTraitId; negative: NegativeTraitId };
   status: HeroStatus;
   personal_wealth: number;
   gear: Partial<Record<GearSlot, Item>>;
@@ -170,7 +185,20 @@ export interface BossFight {
   bossHp: number;
   round: number;
   hasteMul: number; // 1 or 1.5 when a Scroll of Haste fired at combat start
+  deadHeroIds: string[]; // accumulates across the raid — fortitude hit 0, even if later revived
 }
+
+export type RelationshipStatus = "neutral" | "bonded" | "rivals";
+export interface Relationship {
+  heroAId: string;
+  heroBId: string;
+  affinity: number;
+  status: RelationshipStatus;
+}
+// unordered pair key — sort so (a,b) and (b,a) hash the same
+export const relationshipKey = (a: string, b: string) => [a, b].sort().join("|");
+export const findRelationship = (relationships: Relationship[], a: string, b: string) =>
+  relationships.find((r) => relationshipKey(r.heroAId, r.heroBId) === relationshipKey(a, b));
 
 export interface BossDef {
   id: string;
@@ -235,6 +263,8 @@ interface GuildState {
   floatingTexts: FloatingText[]; // ephemeral UI juice, not persisted
   activeChats: HeroChat[]; // ephemeral hero chatter, not persisted
   upgrades: string[]; // purchased upgrade ids
+  guildFacilities: { tavernLevel: number; forgeLevel: number; bountyBoardLevel: number };
+  relationships: Relationship[];
   marketRates: MarketRates;
 
   dispatchHero: (heroId: string, dungeonId: string) => void;
@@ -260,6 +290,8 @@ interface GuildState {
   ) => void;
   retireHero: (heroId: string) => void;
   buyUpgrade: (upgradeId: string, cost: { gold: number; reputation: number }) => void;
+  upgradeFacility: (facility: FacilityKey, cost: number) => void;
+  tickTavernRegen: () => void;
   rollMarket: () => void;
   sellMaterial: (key: MaterialKey) => void;
   exportSave: () => string;
@@ -269,6 +301,47 @@ interface GuildState {
 
 const QUEST_FATIGUE = 10; // fortitude lost on a successful run
 const GREED_CAP = 0.8; // Ego Tax ceiling (80%)
+const RIVAL_ROLL_CHANCE = 0.3;
+const BOND_AFFINITY_THRESHOLD = 5;
+
+// Pure — applies post-victory affinity gains between every surviving pair,
+// then (if someone died this raid) rolls a rivalry chance per survivor.
+const applyRaidRelationships = (
+  relationships: Relationship[],
+  survivors: Hero[],
+  partyIds: string[],
+  someoneDied: boolean,
+): Relationship[] => {
+  let next = relationships;
+  const bump = (a: string, b: string) => {
+    const existing = findRelationship(next, a, b);
+    const affinity = (existing?.affinity ?? 0) + 1;
+    const status: RelationshipStatus =
+      affinity > BOND_AFFINITY_THRESHOLD ? "bonded" : (existing?.status ?? "neutral");
+    next = existing
+      ? next.map((r) => (r === existing ? { ...r, affinity, status } : r))
+      : [...next, { heroAId: a, heroBId: b, affinity, status }];
+  };
+  for (let i = 0; i < survivors.length; i++) {
+    for (let j = i + 1; j < survivors.length; j++) {
+      bump(survivors[i].id, survivors[j].id);
+    }
+  }
+
+  if (someoneDied) {
+    for (const survivor of survivors) {
+      if (Math.random() >= RIVAL_ROLL_CHANCE) continue;
+      const others = partyIds.filter((id) => id !== survivor.id);
+      if (others.length === 0) continue;
+      const rivalId = others[Math.floor(Math.random() * others.length)];
+      const existing = findRelationship(next, survivor.id, rivalId);
+      next = existing
+        ? next.map((r) => (r === existing ? { ...r, status: "rivals" as const } : r))
+        : [...next, { heroAId: survivor.id, heroBId: rivalId, affinity: 0, status: "rivals" as const }];
+    }
+  }
+  return next;
+};
 
 // Add exp and run the level-up loop. Pure — returns a new hero + any level
 // logs. Each level: +power, +maxFortitude, full heal, +2% greed (Ego Tax).
@@ -307,6 +380,7 @@ const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => 
 const MAX_LOG_ENTRIES = 50;
 export const HEAL_COST = 50;
 export const HIRE_COST = 100;
+export const GREEDY_MIN_PRICE = 100;
 export const RETIRE_REP_PER_LEVEL = 50;
 export const BASE_ROSTER_CAP = 3;
 // per-unit base sale price, multiplied by the live market rate
@@ -325,6 +399,21 @@ export const UPGRADE_IDS = {
 
 export const rosterCap = (upgrades: string[]) =>
   BASE_ROSTER_CAP + (upgrades.includes(UPGRADE_IDS.beds) ? 1 : 0);
+
+// ── guild hall facilities: leveled, repeatable upgrades (distinct from the
+// one-time UPGRADE_IDS flags above) ──
+export type FacilityKey = "tavern" | "forge" | "bountyBoard";
+export const FACILITY_MAX_LEVEL = 5;
+export const FACILITY_BASE_COST: Record<FacilityKey, number> = {
+  tavern: 150,
+  forge: 200,
+  bountyBoard: 250,
+};
+// linear scaling: level 0->1 costs base, 1->2 costs 2x base, etc.
+export const facilityUpgradeCost = (facility: FacilityKey, currentLevel: number) =>
+  FACILITY_BASE_COST[facility] * (currentLevel + 1);
+const TAVERN_REGEN_PCT_PER_LEVEL = 0.005; // % max HP per idle hero per tick, per level
+const FORGE_TIER_BONUS_PER_LEVEL = 5; // added to the crafting rarity roll, per level
 
 // ── gear math: single source for computed hero totals ──
 
@@ -355,10 +444,15 @@ export function totalStats(hero: Hero) {
   return {
     power: Math.round(basePower + gearBonus(hero, "power")),
     speed: Math.round((hero.stats.speed + gearBonus(hero, "speed")) * 100) / 100,
-    maxFortitude: hero.stats.max_fortitude + gearBonus(hero, "max_fortitude"),
+    maxFortitude: Math.round(
+      (hero.stats.max_fortitude + gearBonus(hero, "max_fortitude")) *
+        (hero.traits.positive === "resilient" ? 1.1 : 1),
+    ),
     scavenge:
       Math.round(
-        (hero.attr.scavenge_multiplier + gearBonus(hero, "scavenge")) * 100,
+        (hero.attr.scavenge_multiplier + gearBonus(hero, "scavenge")) *
+          (hero.traits.positive === "lucky" ? 1.1 : 1) *
+          100,
       ) / 100,
   };
 }
@@ -403,6 +497,23 @@ const CANDIDATE_NAMES = [
   "Hazel", "Krug", "Sable", "Fenwick", "Rooka", "Grim", "Tilly", "Bortle",
 ];
 
+const POSITIVE_TRAIT_IDS = Object.keys(POSITIVE_TRAITS) as PositiveTraitId[];
+const NEGATIVE_TRAIT_IDS = Object.keys(NEGATIVE_TRAITS) as NegativeTraitId[];
+
+const randomTraits = () => ({
+  positive: POSITIVE_TRAIT_IDS[randInt([0, POSITIVE_TRAIT_IDS.length - 1])],
+  negative: NEGATIVE_TRAIT_IDS[randInt([0, NEGATIVE_TRAIT_IDS.length - 1])],
+});
+
+// external data (old localStorage saves, imported exports) may predate the
+// traits field or carry its old `string[]` shape — self-heal instead of
+// crashing the whole app on a bad read
+const sanitizeHero = (h: Hero): Hero => {
+  const t = h?.traits as { positive?: string; negative?: string } | undefined;
+  const valid = !!t && !!POSITIVE_TRAITS[t.positive as PositiveTraitId] && !!NEGATIVE_TRAITS[t.negative as NegativeTraitId];
+  return valid ? h : { ...h, traits: randomTraits() };
+};
+
 let heroSeq = 0;
 const rollCandidate = (): Hero => {
   const fortitude = randInt([40, 60]);
@@ -423,7 +534,7 @@ const rollCandidate = (): Hero => {
       greed: randInt([5, 25]) / 100,
       scavenge_multiplier: randInt([8, 15]) / 10,
     },
-    traits: [],
+    traits: randomTraits(),
     status: "idle",
     personal_wealth: 0,
     gear: {},
@@ -446,6 +557,8 @@ type GuildData = Pick<
   GuildState,
   | "ledger"
   | "upgrades"
+  | "guildFacilities"
+  | "relationships"
   | "marketRates"
   | "heroes"
   | "tavernCandidates"
@@ -469,6 +582,8 @@ const initialState = (): GuildData => ({
     materials: { organics: 0, minerals: 0, botanicals: 0 },
   },
   upgrades: [],
+  guildFacilities: { tavernLevel: 0, forgeLevel: 0, bountyBoardLevel: 0 },
+  relationships: [],
   marketRates: { organics: 1, minerals: 1, botanicals: 1 },
 
   heroes: [
@@ -481,7 +596,7 @@ const initialState = (): GuildData => ({
       expToNext: 100,
       stats: { power: 10, fortitude: 50, max_fortitude: 50, speed: 1 },
       attr: { greed: 0.1, scavenge_multiplier: 1 },
-      traits: [],
+      traits: { positive: "resilient", negative: "glutton" },
       status: "idle",
       personal_wealth: 0,
       gear: {},
@@ -611,6 +726,10 @@ export const useGuildStore = create<GuildState>()(
           // dungeons stay code-defined — old exports must not shadow new content
           set({
             ...parsed,
+            heroes: (parsed.heroes as Hero[]).map(sanitizeHero),
+            tavernCandidates: Array.isArray(parsed.tavernCandidates)
+              ? (parsed.tavernCandidates as Hero[]).map(sanitizeHero)
+              : [],
             floatingTexts: [],
             activeChats: [],
             bossResult: null,
@@ -736,6 +855,7 @@ export const useGuildStore = create<GuildState>()(
             bossHp: bossDef.maxHp,
             round: 0,
             hasteMul,
+            deadHeroIds: [],
           },
           consumables: nextConsumables,
           combatLoadout: nextLoadout,
@@ -760,16 +880,27 @@ export const useGuildStore = create<GuildState>()(
         const fight = get().bossFight;
         if (!fight) return;
         const bossDef = BOSSES.find((b) => b.id === fight.bossId)!;
-        const { heroes, consumables, combatLoadout, ledger } = get();
+        const { heroes, consumables, combatLoadout, ledger, relationships } = get();
+        // a raid persisted before this field existed would rehydrate without
+        // it — default instead of crashing on the first tick after upgrade
+        const deadHeroIds = fight.deadHeroIds ?? [];
 
         const inParty = (h: Hero) => fight.heroIds.includes(h.id);
         const living = heroes.filter((h) => inParty(h) && h.stats.fortitude > 0);
         const newLogs: LogEntry[] = [];
         const chats: { heroId: string; text: string }[] = [];
 
-        // ── party swings first ──
+        // ── party swings first — bonded/rival pairs currently fighting shift total damage ──
+        let synergyMod = 0;
+        for (let i = 0; i < living.length; i++) {
+          for (let j = i + 1; j < living.length; j++) {
+            const rel = findRelationship(relationships, living[i].id, living[j].id);
+            if (rel?.status === "bonded") synergyMod += 0.05;
+            else if (rel?.status === "rivals") synergyMod -= 0.05;
+          }
+        }
         const partyDmg = Math.round(
-          living.reduce((sum, h) => sum + totalStats(h).power, 0) * fight.hasteMul,
+          living.reduce((sum, h) => sum + totalStats(h).power, 0) * fight.hasteMul * (1 + synergyMod),
         );
         const bossHp = fight.bossHp - partyDmg;
 
@@ -817,6 +948,12 @@ export const useGuildStore = create<GuildState>()(
               reputation: ledger.reputation + bossDef.rewardRep,
               materials,
             },
+            relationships: applyRaidRelationships(
+              relationships,
+              living,
+              fight.heroIds,
+              deadHeroIds.length > 0,
+            ),
             eventLog: [...newLogs, ...get().eventLog].slice(0, MAX_LOG_ENTRIES),
           });
           return;
@@ -840,6 +977,10 @@ export const useGuildStore = create<GuildState>()(
           return true;
         };
 
+        // heroes who flee this tick (Coward trait) — removed from the fight,
+        // sent home safe, never also drink a potion the same tick
+        const fleeing: string[] = [];
+
         // per-hero consumable auto-triggers, checked every combat tick
         const checkConsumableTriggers = (h: Hero): Hero => {
           const max = totalStats(h).maxFortitude;
@@ -852,8 +993,13 @@ export const useGuildStore = create<GuildState>()(
             newLogs.push(makeLog(`${h.name}'s Phoenix Vial shatters — back on their feet!`));
           }
           if (fort < 0) fort = 0; // down, no vial — don't leak negative HP into bars
-          // Life Potion — emergency heal below 30%
-          if (fort > 0 && fort < max * 0.3 && consume(h.id, "life_potion")) {
+          // Coward — flees below 40% HP instead of fighting on
+          if (fort > 0 && fort < max * 0.4 && h.traits.negative === "coward") {
+            fleeing.push(h.id);
+            chats.push({ heroId: h.id, text: "I didn't sign up for this!" });
+            newLogs.push(makeLog(`${h.name} flees the battle!`));
+          } else if (fort > 0 && fort < max * 0.3 && consume(h.id, "life_potion")) {
+            // Life Potion — emergency heal below 30%
             fort = Math.min(max, fort + Math.round(max * 0.5));
             chats.push({ heroId: h.id, text: "I'm not dying today!" });
             newLogs.push(makeLog(`${h.name} downs a Life Potion mid-fight.`));
@@ -863,21 +1009,30 @@ export const useGuildStore = create<GuildState>()(
             : { ...h, stats: { ...h.stats, fortitude: fort } };
         };
 
+        // fortitude hitting 0 counts as "died" even if a Phoenix Vial revives them
+        // this same tick — captured before checkConsumableTriggers can heal it away
+        const newlyDead: string[] = [];
         let updated = heroes.map((h) => {
           if (!inParty(h)) return h;
           const struck =
             h.id === target?.id
               ? { ...h, stats: { ...h.stats, fortitude: h.stats.fortitude - bossDef.damage } }
               : h;
-          return checkConsumableTriggers(struck);
+          if (struck.stats.fortitude <= 0 && !deadHeroIds.includes(struck.id)) {
+            newlyDead.push(struck.id);
+          }
+          const checked = checkConsumableTriggers(struck);
+          return fleeing.includes(h.id) ? { ...checked, status: "idle" as const } : checked;
         });
 
-        const anyoneUp = updated.some((h) => inParty(h) && h.stats.fortitude > 0);
+        const anyoneUp = updated.some(
+          (h) => inParty(h) && h.stats.fortitude > 0 && !fleeing.includes(h.id),
+        );
         if (!anyoneUp) {
-          // wipe — everyone limps home injured
+          // wipe — everyone still standing limps home injured; fled heroes stay idle
           const heroNames = heroes.filter(inParty).map((h) => h.name);
           updated = updated.map((h) =>
-            inParty(h)
+            inParty(h) && !fleeing.includes(h.id)
               ? { ...h, status: "injured" as const, stats: { ...h.stats, fortitude: 0 } }
               : h,
           );
@@ -902,7 +1057,13 @@ export const useGuildStore = create<GuildState>()(
         }
 
         set({
-          bossFight: { ...fight, bossHp, round: fight.round + 1 },
+          bossFight: {
+            ...fight,
+            bossHp,
+            round: fight.round + 1,
+            heroIds: fight.heroIds.filter((id) => !fleeing.includes(id)),
+            deadHeroIds: [...deadHeroIds, ...newlyDead],
+          },
           heroes: updated,
           consumables: nextConsumables,
           combatLoadout: nextLoadout,
@@ -950,6 +1111,43 @@ export const useGuildStore = create<GuildState>()(
         addLog(`Guild upgrade purchased: ${upgradeId}.`);
       },
 
+      upgradeFacility: (facility, cost) => {
+        const { ledger, guildFacilities, addLog } = get();
+        const levelKey = `${facility}Level` as const;
+        const currentLevel = guildFacilities[levelKey];
+        if (currentLevel >= FACILITY_MAX_LEVEL || ledger.gold < cost) return;
+
+        set({
+          ledger: { ...ledger, gold: ledger.gold - cost },
+          guildFacilities: { ...guildFacilities, [levelKey]: currentLevel + 1 },
+        });
+        addLog(`${facility} upgraded to level ${currentLevel + 1}.`);
+      },
+
+      tickTavernRegen: () => {
+        const { heroes, guildFacilities } = get();
+        const level = guildFacilities.tavernLevel;
+        if (level <= 0) return;
+        const regenPct = TAVERN_REGEN_PCT_PER_LEVEL * level;
+        let changed = false;
+        const updated = heroes.map((h) => {
+          if (h.status !== "idle") return h;
+          const max = totalStats(h).maxFortitude;
+          if (h.stats.fortitude >= max) return h;
+          changed = true;
+          // Math.max(1, ...) floor: without it, sub-1 HP amounts (any hero
+          // with max_fortitude under ~100 at Lv1) round down to a no-op tick
+          return {
+            ...h,
+            stats: {
+              ...h.stats,
+              fortitude: Math.min(max, h.stats.fortitude + Math.max(1, Math.round(max * regenPct))),
+            },
+          };
+        });
+        if (changed) set({ heroes: updated });
+      },
+
       rollMarket: () => {
         const roll = () => Math.round(randInt([50, 200])) / 100; // 0.5–2.0
         set({
@@ -985,7 +1183,13 @@ export const useGuildStore = create<GuildState>()(
           if (ledger.materials[mat] < need) return;
         }
 
-        const roll = Math.random() * 100;
+        // Forge facility levels bias the roll toward higher tiers — clamp is
+        // load-bearing: an unclamped roll past 100 would miss every bucket
+        // and fall back to RARITY_TABLE[0] (common), inverting the buff.
+        const roll = Math.min(
+          99.99,
+          Math.random() * 100 + FORGE_TIER_BONUS_PER_LEVEL * get().guildFacilities.forgeLevel,
+        );
         const { rarity, tier } =
           RARITY_TABLE.find((r) => roll < r.upTo) ?? RARITY_TABLE[0];
         const prefix =
@@ -1055,21 +1259,37 @@ export const useGuildStore = create<GuildState>()(
           return itemStat > (current.base_stats[statKey] ?? 0) ? item.slot : null;
         };
 
-        // companyman pays a 150% premium — the guild's favorite customer
-        const priceFor = (h: Hero) =>
-          heroEffects(h).has("companyman")
+        // companyman pays a 150% premium, thrifty gets a 20% discount
+        const priceFor = (h: Hero) => {
+          const base = heroEffects(h).has("companyman")
             ? Math.round(item.price * 1.5)
             : item.price;
+          return h.traits.positive === "thrifty" ? Math.round(base * 0.8) : base;
+        };
 
         let slot: GearSlot | null = null;
         const buyer = heroes.find((h) => {
           if (h.status !== "idle" || h.personal_wealth < priceFor(h)) return false;
+          if (h.traits.negative === "greedy" && priceFor(h) < GREEDY_MIN_PRICE) return false;
           slot = targetSlotFor(h);
           return slot !== null;
         });
         if (!buyer || !slot) {
-          // nobody bites — a random hero explains why
-          if (heroes.length > 0) {
+          const greedyRejector = heroes.find(
+            (h) =>
+              h.status === "idle" &&
+              h.personal_wealth >= priceFor(h) &&
+              h.traits.negative === "greedy" &&
+              priceFor(h) < GREEDY_MIN_PRICE,
+          );
+          if (greedyRejector) {
+            get().triggerHeroChat(
+              greedyRejector.id,
+              "Do I look like a peasant? Bring me glowing weapons!",
+              "roster",
+            );
+          } else if (heroes.length > 0) {
+            // nobody bites — a random hero explains why
             const grump = heroes[randInt([0, heroes.length - 1])];
             get().triggerHeroChat(
               grump.id,
@@ -1110,15 +1330,16 @@ export const useGuildStore = create<GuildState>()(
       hireHero: (candidateId) => {
         const { ledger, heroes, tavernCandidates, upgrades, addLog } = get();
         const candidate = tavernCandidates.find((c) => c.id === candidateId);
-        if (!candidate || ledger.gold < HIRE_COST || heroes.length >= rosterCap(upgrades))
+        const cost = candidate?.traits.negative === "glutton" ? HIRE_COST * 2 : HIRE_COST;
+        if (!candidate || ledger.gold < cost || heroes.length >= rosterCap(upgrades))
           return false;
 
         set({
-          ledger: { ...ledger, gold: ledger.gold - HIRE_COST },
+          ledger: { ...ledger, gold: ledger.gold - cost },
           heroes: [...heroes, candidate],
           tavernCandidates: tavernCandidates.filter((c) => c.id !== candidateId),
         });
-        addLog(`${candidate.name} joined the guild for ${HIRE_COST}g.`);
+        addLog(`${candidate.name} joined the guild for ${cost}g.`);
         // an old-timer welcomes the recruit
         if (heroes.length > 0) {
           const greeter = heroes[randInt([0, heroes.length - 1])];
@@ -1139,13 +1360,14 @@ export const useGuildStore = create<GuildState>()(
       healHero: (heroId) => {
         const { heroes, ledger, addLog } = get();
         const hero = heroes.find((h) => h.id === heroId);
-        if (!hero || hero.status === "on_quest" || ledger.gold < HEAL_COST)
+        const cost = hero?.traits.negative === "glutton" ? HEAL_COST * 2 : HEAL_COST;
+        if (!hero || hero.status === "on_quest" || ledger.gold < cost)
           return;
         const maxFort = totalStats(hero).maxFortitude; // armor counts
         if (hero.stats.fortitude >= maxFort) return;
 
         set({
-          ledger: { ...ledger, gold: ledger.gold - HEAL_COST },
+          ledger: { ...ledger, gold: ledger.gold - cost },
           heroes: heroes.map((h) =>
             h.id === heroId
               ? {
@@ -1156,7 +1378,7 @@ export const useGuildStore = create<GuildState>()(
               : h,
           ),
         });
-        addLog(`${hero.name} healed for ${HEAL_COST}g and is ready to work.`);
+        addLog(`${hero.name} healed for ${cost}g and is ready to work.`);
       },
 
       dispatchHero: (heroId, dungeonId) => {
@@ -1320,16 +1542,23 @@ export const useGuildStore = create<GuildState>()(
     {
       name: "guild-master-storage",
       // ponytail: version bump discards old dev saves; write real migrations post-launch
-      version: 7,
+      version: 8,
       // stale save → intentional reset to defaults (merge fills everything)
       migrate: () => ({}) as GuildState,
       // saves written before dungeons were unpersisted still carry a stale
       // dungeons array — always take the code-defined list
-      merge: (persisted, current) => ({
-        ...current,
-        ...(persisted as Partial<GuildState>),
-        dungeons: current.dungeons,
-      }),
+      merge: (persisted, current) => {
+        const merged = {
+          ...current,
+          ...(persisted as Partial<GuildState>),
+          dungeons: current.dungeons,
+        };
+        return {
+          ...merged,
+          heroes: merged.heroes.map(sanitizeHero),
+          tavernCandidates: merged.tavernCandidates.map(sanitizeHero),
+        };
+      },
       // floatingTexts/activeChats/bossResult are ephemeral juice — never write
       // to localStorage. dungeons are static content from code — persisting
       // them would freeze old saves out of newly added dungeons.

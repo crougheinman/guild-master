@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { avatarFor, BOSS_ART, ICONS } from "@/components/assets";
 import { hpBarColor } from "@/components/RightPanel";
 import {
   BOSSES,
   MAX_HERO_SLOTS,
   MAX_PARTY,
+  relationshipKey,
   totalStats,
   useGuildStore,
   type ConsumableId,
   type Hero,
+  type Relationship,
 } from "@/store/useGuildStore";
 
 const TYPE_BADGE: Record<string, string> = {
@@ -63,19 +65,44 @@ function Slot({
   );
 }
 
+// O(1) per-partner lookup regardless of roster size — relMap is memoized by
+// the parent, rebuilt only when the relationships array reference changes
+function partyBondStatus(heroId: string, partyIds: string[], relMap: Map<string, Relationship>) {
+  let hasBonded = false;
+  let hasRival = false;
+  for (const otherId of partyIds) {
+    if (otherId === heroId) continue;
+    const status = relMap.get(relationshipKey(heroId, otherId))?.status;
+    if (status === "bonded") hasBonded = true;
+    else if (status === "rivals") hasRival = true;
+  }
+  return hasBonded ? "bonded" : hasRival ? "rivals" : "neutral";
+}
+
 function PartyHeroCard({
   hero,
   selected,
   onAssigned,
+  partyIds,
+  relMap,
 }: {
   hero: Hero;
   selected: ConsumableId | null;
   onAssigned: () => void;
+  partyIds: string[];
+  relMap: Map<string, Relationship>;
 }) {
   const t = totalStats(hero);
   const pct = Math.max(0, Math.min(100, (hero.stats.fortitude / t.maxFortitude) * 100));
+  const bondStatus = partyBondStatus(hero.id, partyIds, relMap);
+  const borderClass =
+    bondStatus === "bonded"
+      ? "border-emerald-500/60"
+      : bondStatus === "rivals"
+        ? "border-red-500/60"
+        : "border-slate-800";
   return (
-    <li className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+    <li className={`rounded-lg border ${borderClass} bg-slate-900 p-3`}>
       <div className="flex items-center gap-2.5">
         {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
         <img
@@ -122,6 +149,8 @@ export default function BossPrepScreen({
   const combatLoadout = useGuildStore((s) => s.combatLoadout);
   const bossFight = useGuildStore((s) => s.bossFight);
   const startBossFight = useGuildStore((s) => s.startBossFight);
+  const relationships = useGuildStore((s) => s.relationships);
+  const triggerHeroChat = useGuildStore((s) => s.triggerHeroChat);
 
   const [selected, setSelected] = useState<ConsumableId | null>(null);
 
@@ -130,6 +159,28 @@ export default function BossPrepScreen({
 
   const battleReady = (h: Hero) => h.status === "idle" && h.stats.fortitude > 0;
   const party = heroes.filter(battleReady).slice(0, MAX_PARTY);
+  const partyIds = useMemo(() => party.map((h) => h.id), [party]);
+
+  // rebuilds only when the relationships array reference changes (i.e. after
+  // a raid resolves), not on every render — O(1) pair lookups during render
+  const relMap = useMemo(() => {
+    const m = new Map<string, Relationship>();
+    for (const r of relationships) m.set(relationshipKey(r.heroAId, r.heroBId), r);
+    return m;
+  }, [relationships]);
+
+  // auto-chat when the party's composition changes — keyed on a stable
+  // string, not `party` itself, since that array is a fresh reference every
+  // render and would refire on every re-render otherwise
+  const partyKey = [...partyIds].sort().join(",");
+  useEffect(() => {
+    for (const hero of party) {
+      const status = partyBondStatus(hero.id, partyIds, relMap);
+      if (status === "bonded") triggerHeroChat(hero.id, "I've got your back!", "roster");
+      else if (status === "rivals") triggerHeroChat(hero.id, "Stay out of my way this time.", "roster");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partyKey]);
 
   // heroes barred from the raid, with the reason shown so the rule is explicit
   const benchReason = (h: Hero): string | null => {
@@ -249,7 +300,14 @@ export default function BossPrepScreen({
         ) : (
           <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
             {party.map((h) => (
-              <PartyHeroCard key={h.id} hero={h} selected={selected} onAssigned={() => setSelected(null)} />
+              <PartyHeroCard
+                key={h.id}
+                hero={h}
+                selected={selected}
+                onAssigned={() => setSelected(null)}
+                partyIds={partyIds}
+                relMap={relMap}
+              />
             ))}
           </ul>
         )}

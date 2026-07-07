@@ -14,6 +14,7 @@ export default function GameTicker() {
   const tickQuests = useGuildStore((s) => s.tickQuests);
   const rollMarket = useGuildStore((s) => s.rollMarket);
   const tickBossFight = useGuildStore((s) => s.tickBossFight);
+  const tickTavernRegen = useGuildStore((s) => s.tickTavernRegen);
 
   useEffect(() => {
     tickQuests(); // offline progress
@@ -22,10 +23,11 @@ export default function GameTicker() {
     const id = setInterval(() => {
       tickQuests();
       tickBossFight(); // no-op unless a raid is running
+      tickTavernRegen(); // no-op unless the Tavern facility is leveled
       if (++seconds % 60 === 0) rollMarket(); // market shifts every minute
     }, 1000);
     return () => clearInterval(id);
-  }, [tickQuests, rollMarket, tickBossFight]);
+  }, [tickQuests, rollMarket, tickBossFight, tickTavernRegen]);
 
   return null;
 }

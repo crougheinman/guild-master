@@ -26,7 +26,6 @@ export default function Tavern() {
 
   const cap = rosterCap(upgrades);
   const rosterFull = heroes.length >= cap;
-  const canAfford = gold >= HIRE_COST;
 
   // transient "roster full" feedback on a failed hire attempt, same pattern
   // as Market's per-item sell error
@@ -76,7 +75,10 @@ export default function Tavern() {
         <p className="text-sm text-slate-500">The tavern is empty tonight.</p>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {candidates.map((c) => (
+          {candidates.map((c) => {
+            const cost = c.traits.negative === "glutton" ? HIRE_COST * 2 : HIRE_COST;
+            const canAffordThis = gold >= cost;
+            return (
             <li
               key={c.id}
               className="flex flex-col rounded-lg border border-slate-800 bg-slate-900 p-4"
@@ -120,20 +122,21 @@ export default function Tavern() {
               <button
                 type="button"
                 onClick={() => handleHire(c.id)}
-                disabled={!canAfford}
+                disabled={!canAffordThis}
                 title={
                   rosterFull
                     ? `Roster full (${heroes.length}/${cap})`
-                    : canAfford
+                    : canAffordThis
                       ? undefined
-                      : `Need ${HIRE_COST} gold`
+                      : `Need ${cost} gold`
                 }
                 className="mt-4 min-h-10 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-3 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Hire ({HIRE_COST}g)
+                Hire ({cost}g)
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>
