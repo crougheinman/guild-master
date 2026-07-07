@@ -138,6 +138,7 @@ export default function RightPanel() {
   const eventLog = useGuildStore((s) => s.eventLog);
   const healHero = useGuildStore((s) => s.healHero);
   const activeQuests = useGuildStore((s) => s.activeQuests);
+  const expedition = useGuildStore((s) => s.expedition);
   const dungeons = useGuildStore((s) => s.dungeons);
   const floatingTexts = useGuildStore((s) => s.floatingTexts);
   const removeFloatingText = useGuildStore((s) => s.removeFloatingText);
@@ -322,6 +323,12 @@ export default function RightPanel() {
                   <CountdownBar
                     completionTime={quest.completionTime}
                     duration={questDungeon.base_duration_ms / totalStats(hero).speed}
+                  />
+                )}
+                {expedition?.heroIds.includes(hero.id) && (
+                  <CountdownBar
+                    completionTime={expedition.completionTime}
+                    duration={expedition.durationMs}
                   />
                 )}
 

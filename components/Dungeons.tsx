@@ -4,12 +4,133 @@ import { useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { BOSS_ART, DUNGEON_ART } from "@/components/assets";
 import BossPrepScreen from "@/components/BossPrepScreen";
+import CountdownBar from "@/components/CountdownBar";
 import HeroPicker from "@/components/HeroPicker";
 import ModuleHelp from "@/components/ModuleHelp";
-import { BOSSES, useGuildStore, type Dungeon } from "@/store/useGuildStore";
+import {
+  BOSSES,
+  EXPEDITION_DURATIONS_MS,
+  EXPEDITION_GOLD_PER_POWER_HOUR,
+  EXPEDITION_LEVEL_GOLD_BONUS,
+  MAX_PARTY,
+  totalStats,
+  useGuildStore,
+  type Dungeon,
+} from "@/store/useGuildStore";
 
 const formatDuration = (ms: number) =>
   ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
+
+const formatHours = (ms: number) => `${ms / 3_600_000}h`;
+
+// Offline Expeditions — the Bounty Board's game loop. Zero-risk, hands-off,
+// deliberately ~20-25% of an active quester's gold rate (see store constants).
+function BountyBoard() {
+  const heroes = useGuildStore((s) => s.heroes);
+  const level = useGuildStore((s) => s.guildFacilities.bountyBoardLevel);
+  const expedition = useGuildStore((s) => s.expedition);
+  const startExpedition = useGuildStore((s) => s.startExpedition);
+  const [duration, setDuration] = useState(EXPEDITION_DURATIONS_MS[0]);
+
+  const party = heroes
+    .filter((h) => h.status === "idle" && h.stats.fortitude > 0)
+    .slice(0, MAX_PARTY);
+
+  if (level < 1) {
+    return (
+      <section className="mb-4">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+          Bounty Board
+        </h3>
+        <p className="rounded-lg border border-slate-800 bg-slate-900/50 p-4 text-sm text-slate-500">
+          Locked — upgrade the Bounty Board in the Guild Hall to unlock offline
+          expeditions.
+        </p>
+      </section>
+    );
+  }
+
+  if (expedition) {
+    const members = heroes.filter((h) => expedition.heroIds.includes(h.id));
+    return (
+      <section className="mb-4">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+          Bounty Board
+        </h3>
+        <div className="rounded-lg border border-sky-500/30 bg-slate-900 p-4">
+          <p className="text-sm font-medium text-sky-300">
+            Expedition underway — {members.map((h) => h.name).join(", ")}
+          </p>
+          <CountdownBar
+            completionTime={expedition.completionTime}
+            duration={expedition.durationMs}
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            They&apos;ll return on their own — rewards collect automatically, even
+            while the game is closed.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  const hours = duration / 3_600_000;
+  const levelBonus = 1 + EXPEDITION_LEVEL_GOLD_BONUS * Math.max(0, level - 1);
+  const estGold = Math.round(
+    party.reduce((sum, h) => sum + totalStats(h).power, 0) *
+      EXPEDITION_GOLD_PER_POWER_HOUR *
+      hours *
+      levelBonus,
+  );
+
+  return (
+    <section className="mb-4">
+      <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+        Bounty Board
+        <ModuleHelp text="Send your idle heroes on a long offline expedition — no risk of injury beyond normal fatigue, and rewards collect automatically when the timer ends, even with the game closed. The gold rate is lower than active questing; it's for when you're away. Higher Bounty Board levels unlock longer expeditions and pay +5% gold each." />
+      </h3>
+      <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+        <div className="flex flex-wrap gap-2">
+          {EXPEDITION_DURATIONS_MS.map((ms, i) => {
+            const unlocked = i < level;
+            const active = duration === ms;
+            return (
+              <button
+                key={ms}
+                type="button"
+                disabled={!unlocked}
+                onClick={() => setDuration(ms)}
+                title={unlocked ? undefined : `Requires Bounty Board Lv ${i + 1}`}
+                className={`min-h-9 cursor-pointer rounded-md border px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40 ${
+                  active
+                    ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-400"
+                    : "border-slate-700 text-slate-300 hover:bg-slate-800"
+                }`}
+              >
+                {formatHours(ms)}
+              </button>
+            );
+          })}
+        </div>
+
+        <p className="mt-3 text-sm text-slate-400">
+          {party.length === 0
+            ? "No battle-ready heroes — everyone is questing, resting, or at 0 HP."
+            : `Party: ${party.map((h) => h.name).join(", ")} · est. ~${estGold}g + materials`}
+        </p>
+
+        <button
+          type="button"
+          disabled={party.length === 0}
+          onClick={() => startExpedition(party.map((h) => h.id), duration)}
+          className="mt-3 min-h-12 w-full cursor-pointer rounded-md border border-sky-500/40 bg-sky-500/10 px-4 text-sm font-medium text-sky-300 transition-colors hover:bg-sky-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Send Expedition ({formatHours(duration)})
+        </button>
+      </div>
+    </section>
+  );
+}
 
 function DungeonCard({
   dungeon,
@@ -127,6 +248,9 @@ export default function Dungeons() {
           </ul>
         )}
       </section>
+
+      {/* ── Offline expeditions (Bounty Board facility) ── */}
+      <BountyBoard />
 
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {dungeons.map((d) => (

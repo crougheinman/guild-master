@@ -21,6 +21,13 @@ export default function CountdownBar({ completionTime, duration }: Props) {
   const remaining = Math.max(0, completionTime - now);
   const pct = Math.min(100, ((duration - remaining) / duration) * 100);
   const secs = Math.ceil(remaining / 1000);
+  // hours-long expeditions share this bar with seconds-long quests
+  const label =
+    secs >= 3600
+      ? `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
+      : secs >= 60
+        ? `${Math.floor(secs / 60)}m ${secs % 60}s`
+        : `${secs}s`;
 
   return (
     <div className="mt-2">
@@ -38,7 +45,7 @@ export default function CountdownBar({ completionTime, duration }: Props) {
         />
       </div>
       <p className="mt-1 font-mono text-[11px] tabular-nums text-sky-400">
-        {remaining === 0 ? "returning…" : `${secs}s remaining`}
+        {remaining === 0 ? "returning…" : `${label} remaining`}
       </p>
     </div>
   );

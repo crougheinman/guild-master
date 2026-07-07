@@ -33,7 +33,20 @@ export type EffectId =
   | "insomniac"
   | "martyr"
   | "monocle"
-  | "companyman";
+  | "companyman"
+  // cursed — only sold by the Shady Merchant, never rolled at the Forge
+  | "hemorrhage"
+  | "bloodpact"
+  | "dread";
+
+// accessory effects the Forge is allowed to roll — cursed ids stay out
+export const CRAFTABLE_EFFECT_IDS: EffectId[] = [
+  "embezzler",
+  "insomniac",
+  "martyr",
+  "monocle",
+  "companyman",
+];
 
 export const EFFECTS: Record<EffectId, { name: string; blurb: string }> = {
   embezzler: {
@@ -55,6 +68,18 @@ export const EFFECTS: Record<EffectId, { name: string; blurb: string }> = {
   companyman: {
     name: "Company Man's Signet",
     blurb: "Pays 150% price when buying guild gear.",
+  },
+  hemorrhage: {
+    name: "Cursed Sword",
+    blurb: "Massive damage, but the bearer bleeds 5% max HP every combat round.",
+  },
+  bloodpact: {
+    name: "Bloodpact Ring",
+    blurb: "Great power, but Life Potions refuse to work for the bearer.",
+  },
+  dread: {
+    name: "Dread Plate",
+    blurb: "Enormous fortitude, but the boss always strikes the wearer first.",
   },
 };
 
@@ -265,6 +290,11 @@ interface GuildState {
   upgrades: string[]; // purchased upgrade ids
   guildFacilities: { tavernLevel: number; forgeLevel: number; bountyBoardLevel: number };
   relationships: Relationship[];
+  expedition: Expedition | null; // one offline expedition at a time, ticked by GameTicker
+  shadyMerchantActive: boolean;
+  shadyMerchantExpiresAt: number; // epoch ms — merchant vanishes on the tick past this
+  shadyMerchantInventory: Item[];
+  shadyMerchantSeenVisit: number; // expiresAt of the visit the player dismissed (0 = none)
   marketRates: MarketRates;
 
   dispatchHero: (heroId: string, dungeonId: string) => void;
@@ -292,6 +322,11 @@ interface GuildState {
   buyUpgrade: (upgradeId: string, cost: { gold: number; reputation: number }) => void;
   upgradeFacility: (facility: FacilityKey, cost: number) => void;
   tickTavernRegen: () => void;
+  startExpedition: (heroIds: string[], durationMs: number) => boolean;
+  tickExpedition: () => void;
+  tickShadyMerchant: () => void;
+  buyShadyItem: (itemId: string) => boolean;
+  setShadyMerchantSeen: (visit: number) => void;
   rollMarket: () => void;
   sellMaterial: (key: MaterialKey) => void;
   exportSave: () => string;
@@ -415,6 +450,67 @@ export const facilityUpgradeCost = (facility: FacilityKey, currentLevel: number)
 const TAVERN_REGEN_PCT_PER_LEVEL = 0.005; // % max HP per idle hero per tick, per level
 const FORGE_TIER_BONUS_PER_LEVEL = 5; // added to the crafting rarity roll, per level
 
+// ── offline expeditions (Bounty Board) ──
+// Balance: zero-risk and hands-off, so the gold rate is deliberately ~20-25%
+// of active questing (Goblin spam ≈600g/hr/hero, endgame ≈2250g/hr/hero, both
+// with click cost + injury risk). Expeditions trade rate for convenience —
+// they must never beat paying attention.
+export interface Expedition {
+  heroIds: string[];
+  startedAt: number;
+  completionTime: number; // absolute epoch ms — resolves late but never wrong in a throttled tab
+  durationMs: number;
+}
+// ── Shady Merchant random event ──
+// Extreme risk/reward gear: stats far above anything craftable, priced cheap —
+// the curse is the real cost, and it hooks the boss-combat loop directly.
+export const SHADY_MERCHANT_DURATION_MS = 10 * 60_000; // exactly 10 minutes
+const SHADY_SPAWN_CHANCE = 1 / 900; // per second ≈ one visit every ~15 min
+export const SHADY_STOCK: Omit<Item, "id">[] = [
+  {
+    name: "Cursed Sword",
+    slot: "weapon",
+    subType: "sword",
+    base_stats: { power: 18 }, // ~3.6x a common sword
+    rarity: "legendary",
+    rarity_tier: 3,
+    prefix: null,
+    suffix: null,
+    specialEffect: "hemorrhage",
+    price: 200,
+  },
+  {
+    name: "Bloodpact Ring",
+    slot: "accessory",
+    subType: "ring",
+    base_stats: { power: 12 }, // 6x a common ring
+    rarity: "epic",
+    rarity_tier: 2,
+    prefix: null,
+    suffix: null,
+    specialEffect: "bloodpact",
+    price: 250,
+  },
+  {
+    name: "Dread Plate",
+    slot: "armor",
+    subType: "armor",
+    base_stats: { max_fortitude: 45 }, // 4.5x common armor
+    rarity: "legendary",
+    rarity_tier: 3,
+    prefix: null,
+    suffix: null,
+    specialEffect: "dread",
+    price: 300,
+  },
+];
+
+// duration slots unlocked one per Bounty Board level (Lv1 = 1h ... Lv5 = 12h)
+export const EXPEDITION_DURATIONS_MS = [1, 2, 4, 8, 12].map((h) => h * 3_600_000);
+export const EXPEDITION_GOLD_PER_POWER_HOUR = 6; // gold per hero power per hour
+export const EXPEDITION_LEVEL_GOLD_BONUS = 0.05; // +5% gold per board level above 1
+const EXPEDITION_EXP_PER_HOUR = 30; // far below active questing (Goblin ≈300/hr)
+
 // ── gear math: single source for computed hero totals ──
 
 export const GEAR_SLOTS: GearSlot[] = [
@@ -430,7 +526,9 @@ export const gearBonus = (hero: Hero, key: keyof ItemStats): number =>
 
 export const heroEffects = (hero: Hero): Set<EffectId> => {
   const out = new Set<EffectId>();
-  for (const s of ["accessory1", "accessory2"] as const) {
+  // all slots, not just accessories — cursed Shady Merchant gear carries
+  // effects on weapons/armor too (crafted gear only ever has them on rings)
+  for (const s of GEAR_SLOTS) {
     const fx = hero.gear[s]?.specialEffect;
     if (fx) out.add(fx);
   }
@@ -559,6 +657,11 @@ type GuildData = Pick<
   | "upgrades"
   | "guildFacilities"
   | "relationships"
+  | "expedition"
+  | "shadyMerchantActive"
+  | "shadyMerchantExpiresAt"
+  | "shadyMerchantInventory"
+  | "shadyMerchantSeenVisit"
   | "marketRates"
   | "heroes"
   | "tavernCandidates"
@@ -584,6 +687,11 @@ const initialState = (): GuildData => ({
   upgrades: [],
   guildFacilities: { tavernLevel: 0, forgeLevel: 0, bountyBoardLevel: 0 },
   relationships: [],
+  expedition: null,
+  shadyMerchantActive: false,
+  shadyMerchantExpiresAt: 0,
+  shadyMerchantInventory: [],
+  shadyMerchantSeenVisit: 0,
   marketRates: { organics: 1, minerals: 1, botanicals: 1 },
 
   heroes: [
@@ -959,8 +1067,10 @@ export const useGuildStore = create<GuildState>()(
           return;
         }
 
-        // ── boss strikes one random living hero ──
-        const target = living[Math.floor(Math.random() * living.length)];
+        // ── boss strikes one random living hero — unless someone wears the
+        // Dread Plate, which draws every blow to its bearer ──
+        const dreadTank = living.find((h) => heroEffects(h).has("dread"));
+        const target = dreadTank ?? living[Math.floor(Math.random() * living.length)];
         let nextConsumables = consumables;
         let nextLoadout = combatLoadout;
 
@@ -998,7 +1108,13 @@ export const useGuildStore = create<GuildState>()(
             fleeing.push(h.id);
             chats.push({ heroId: h.id, text: "I didn't sign up for this!" });
             newLogs.push(makeLog(`${h.name} flees the battle!`));
-          } else if (fort > 0 && fort < max * 0.3 && consume(h.id, "life_potion")) {
+          } else if (
+            fort > 0 &&
+            fort < max * 0.3 &&
+            // Bloodpact Ring — the pact forbids borrowed life
+            !heroEffects(h).has("bloodpact") &&
+            consume(h.id, "life_potion")
+          ) {
             // Life Potion — emergency heal below 30%
             fort = Math.min(max, fort + Math.round(max * 0.5));
             chats.push({ heroId: h.id, text: "I'm not dying today!" });
@@ -1014,10 +1130,13 @@ export const useGuildStore = create<GuildState>()(
         const newlyDead: string[] = [];
         let updated = heroes.map((h) => {
           if (!inParty(h)) return h;
-          const struck =
-            h.id === target?.id
-              ? { ...h, stats: { ...h.stats, fortitude: h.stats.fortitude - bossDef.damage } }
-              : h;
+          let fort = h.stats.fortitude;
+          if (h.id === target?.id) fort -= bossDef.damage;
+          // Cursed Sword — the blade feeds on its bearer every round
+          if (h.stats.fortitude > 0 && heroEffects(h).has("hemorrhage")) {
+            fort -= Math.ceil(totalStats(h).maxFortitude * 0.05);
+          }
+          const struck = fort === h.stats.fortitude ? h : { ...h, stats: { ...h.stats, fortitude: fort } };
           if (struck.stats.fortitude <= 0 && !deadHeroIds.includes(struck.id)) {
             newlyDead.push(struck.id);
           }
@@ -1148,6 +1267,154 @@ export const useGuildStore = create<GuildState>()(
         if (changed) set({ heroes: updated });
       },
 
+      startExpedition: (heroIds, durationMs) => {
+        const { heroes, guildFacilities, expedition, addLog } = get();
+        const level = guildFacilities.bountyBoardLevel;
+        // duration must be a slot this board level has actually unlocked
+        if (level < 1 || expedition) return false;
+        if (!EXPEDITION_DURATIONS_MS.slice(0, level).includes(durationMs)) return false;
+
+        const party = heroes.filter(
+          (h) => heroIds.includes(h.id) && h.status === "idle" && h.stats.fortitude > 0,
+        );
+        if (party.length === 0 || party.length > MAX_PARTY) return false;
+
+        const now = Date.now();
+        set({
+          expedition: {
+            heroIds: party.map((h) => h.id),
+            startedAt: now,
+            completionTime: now + durationMs,
+            durationMs,
+          },
+          heroes: heroes.map((h) =>
+            party.some((p) => p.id === h.id) ? { ...h, status: "on_quest" as const } : h,
+          ),
+        });
+        addLog(
+          `${party.map((h) => h.name).join(", ")} set out on a ${durationMs / 3_600_000}h expedition.`,
+        );
+        return true;
+      },
+
+      tickExpedition: () => {
+        const exp = get().expedition;
+        if (!exp || exp.completionTime > Date.now()) return;
+        const state = get();
+        const hours = exp.durationMs / 3_600_000;
+        const levelBonus =
+          1 + EXPEDITION_LEVEL_GOLD_BONUS * Math.max(0, state.guildFacilities.bountyBoardLevel - 1);
+
+        let heroes = state.heroes;
+        let guildGold = 0;
+        const materials = { ...state.ledger.materials };
+        const newLogs: LogEntry[] = [];
+        const matKeys: MaterialKey[] = ["organics", "minerals", "botanicals"];
+
+        for (const id of exp.heroIds) {
+          const hero = heroes.find((h) => h.id === id);
+          if (!hero) continue; // retired mid-expedition is impossible today, but stay safe
+
+          const fx = heroEffects(hero);
+          const totals = totalStats(hero);
+          // no failure roll — safety is the trade for the low rate (see constants)
+          const rawGold = Math.round(totals.power * EXPEDITION_GOLD_PER_POWER_HOUR * hours * levelBonus);
+          const effectiveGreed = Math.max(
+            0,
+            hero.attr.greed -
+              (state.upgrades.includes(UPGRADE_IDS.taxLoophole) ? 0.02 : 0) -
+              (fx.has("embezzler") ? 0.1 : 0),
+          );
+          const heroCut = Math.round(rawGold * effectiveGreed);
+          guildGold += rawGold - heroCut;
+
+          const matKey = matKeys[randInt([0, matKeys.length - 1])];
+          materials[matKey] += Math.max(1, Math.round(hours * totals.scavenge));
+
+          const fatigued: Hero = {
+            ...hero,
+            personal_wealth: hero.personal_wealth + heroCut,
+            stats: {
+              ...hero.stats,
+              fortitude: fx.has("insomniac")
+                ? hero.stats.fortitude
+                : Math.max(0, hero.stats.fortitude - QUEST_FATIGUE),
+            },
+          };
+          const { hero: leveled, logs } = gainExp(
+            fatigued,
+            Math.round(EXPEDITION_EXP_PER_HOUR * hours),
+          );
+          logs.forEach((l) => newLogs.push(makeLog(l)));
+          const done: Hero = {
+            ...leveled,
+            status: leveled.stats.fortitude === 0 ? "injured" : "idle",
+          };
+          heroes = heroes.map((h) => (h.id === id ? done : h));
+        }
+
+        newLogs.push(
+          makeLog(`Expedition returned after ${hours}h — +${guildGold}g for the guild coffers.`),
+        );
+        set({
+          expedition: null,
+          heroes,
+          ledger: { ...state.ledger, gold: state.ledger.gold + guildGold, materials },
+          eventLog: [...newLogs, ...state.eventLog].slice(0, MAX_LOG_ENTRIES),
+        });
+        const speaker = exp.heroIds[randInt([0, exp.heroIds.length - 1])];
+        get().triggerHeroChat(speaker, "We're back! The road was long.", "roster");
+      },
+
+      tickShadyMerchant: () => {
+        const { shadyMerchantActive, shadyMerchantExpiresAt, addLog } = get();
+        const now = Date.now();
+
+        if (shadyMerchantActive) {
+          if (now >= shadyMerchantExpiresAt) {
+            set({
+              shadyMerchantActive: false,
+              shadyMerchantExpiresAt: 0,
+              shadyMerchantInventory: [],
+            });
+            addLog("The shady merchant has vanished into the mist...");
+          }
+          return;
+        }
+
+        // rare spawn roll, once per tick
+        if (Math.random() >= SHADY_SPAWN_CHANCE) return;
+        set({
+          shadyMerchantActive: true,
+          shadyMerchantExpiresAt: now + SHADY_MERCHANT_DURATION_MS,
+          shadyMerchantInventory: SHADY_STOCK.map((tpl) => ({
+            ...tpl,
+            id: `shady-${Date.now()}-${heroSeq++}`,
+          })),
+        });
+        addLog("A shady merchant has appeared with cursed wares. He won't stay long.");
+      },
+
+      buyShadyItem: (itemId) => {
+        const { shadyMerchantActive, shadyMerchantInventory, ledger, inventory, addLog } = get();
+        const item = shadyMerchantInventory.find((i) => i.id === itemId);
+        if (!shadyMerchantActive || !item || ledger.gold < item.price) return false;
+
+        // bought into the armory with guild gold — heroes then buy/equip it
+        // through the normal Market flow like any other gear
+        set({
+          ledger: { ...ledger, gold: ledger.gold - item.price },
+          inventory: [...inventory, item],
+          shadyMerchantInventory: shadyMerchantInventory.filter((i) => i.id !== itemId),
+        });
+        addLog(`Bought ${item.name} from the shady merchant for ${item.price}g. No refunds.`);
+        return true;
+      },
+
+      setShadyMerchantSeen: (visit) => {
+        set({ shadyMerchantSeenVisit: visit });
+      },
+
       rollMarket: () => {
         const roll = () => Math.round(randInt([50, 200])) / 100; // 0.5–2.0
         set({
@@ -1200,11 +1467,10 @@ export const useGuildStore = create<GuildState>()(
         const value = recipe.base < 1 ? Math.round(raw * 100) / 100 : Math.round(raw);
 
         // accessories can roll a rule-bending effect and take its artifact name
+        // (craftable pool only — cursed effects are Shady Merchant exclusives)
         const specialEffect =
           recipe.slot === "accessory" && Math.random() < ACCESSORY_EFFECT_CHANCE
-            ? (Object.keys(EFFECTS) as EffectId[])[
-                randInt([0, Object.keys(EFFECTS).length - 1])
-              ]
+            ? CRAFTABLE_EFFECT_IDS[randInt([0, CRAFTABLE_EFFECT_IDS.length - 1])]
             : undefined;
 
         const item: Item = {

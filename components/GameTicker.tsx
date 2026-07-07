@@ -15,19 +15,25 @@ export default function GameTicker() {
   const rollMarket = useGuildStore((s) => s.rollMarket);
   const tickBossFight = useGuildStore((s) => s.tickBossFight);
   const tickTavernRegen = useGuildStore((s) => s.tickTavernRegen);
+  const tickExpedition = useGuildStore((s) => s.tickExpedition);
+  const tickShadyMerchant = useGuildStore((s) => s.tickShadyMerchant);
 
   useEffect(() => {
     tickQuests(); // offline progress
+    tickExpedition(); // expeditions that finished while the tab was closed
+    tickShadyMerchant(); // expire a merchant who left while the tab was closed
     rollMarket(); // fresh prices on load
     let seconds = 0;
     const id = setInterval(() => {
       tickQuests();
       tickBossFight(); // no-op unless a raid is running
       tickTavernRegen(); // no-op unless the Tavern facility is leveled
+      tickExpedition(); // no-op unless an expedition just completed
+      tickShadyMerchant(); // rare spawn roll / expiry check
       if (++seconds % 60 === 0) rollMarket(); // market shifts every minute
     }, 1000);
     return () => clearInterval(id);
-  }, [tickQuests, rollMarket, tickBossFight, tickTavernRegen]);
+  }, [tickQuests, rollMarket, tickBossFight, tickTavernRegen, tickExpedition, tickShadyMerchant]);
 
   return null;
 }

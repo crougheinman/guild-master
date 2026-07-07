@@ -31,8 +31,8 @@ const FACILITIES: { key: FacilityKey; name: string; buff: (level: number) => str
     name: "Bounty Board",
     buff: (level) =>
       level === 0
-        ? "Locked — reach Lv 1 to unlock Offline Expeditions (coming soon)."
-        : "Offline Expeditions unlocked (coming soon).",
+        ? "Locked — reach Lv 1 to unlock Offline Expeditions in the Dungeons tab."
+        : `Offline Expeditions unlocked — up to ${[1, 2, 4, 8, 12][Math.min(level, 5) - 1]}h trips, +${5 * (level - 1)}% gold.`,
   },
 ];
 
@@ -46,7 +46,7 @@ export default function GuildHallScreen() {
       <div className="mb-4 flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
           Facilities
-          <ModuleHelp text="Leveled guild facilities, upgraded repeatedly with gold. Each level compounds its passive buff — Tavern heals idle roster heroes over time, Forge biases crafted gear toward higher rarity, and the Bounty Board unlocks future offline play once leveled." />
+          <ModuleHelp text="Leveled guild facilities, upgraded repeatedly with gold. Each level compounds its passive buff — Tavern heals idle roster heroes over time, Forge biases crafted gear toward higher rarity, and the Bounty Board unlocks offline expeditions in the Dungeons tab (longer trips and more gold per level)." />
         </h2>
       </div>
 

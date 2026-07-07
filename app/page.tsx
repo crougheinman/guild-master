@@ -12,6 +12,7 @@ import { MobileChatOverlay } from "@/components/HeroChatBubble";
 import Market from "@/components/Market";
 import RightPanel from "@/components/RightPanel";
 import Settings from "@/components/Settings";
+import ShadyMerchantModal from "@/components/ShadyMerchantModal";
 import Tavern from "@/components/Tavern";
 import Upgrades from "@/components/Upgrades";
 import WelcomeModal from "@/components/WelcomeModal";
@@ -70,6 +71,7 @@ export default function Dashboard() {
       <GameTicker />
       {hydrated && <MobileChatOverlay />}
       {hydrated && <BossResultModal />}
+      {hydrated && <ShadyMerchantModal />}
       {hydrated && <WelcomeModal />}
 
       {/* ── Mobile top bar: treasury always visible + settings gear ── */}
