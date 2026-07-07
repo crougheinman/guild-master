@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { avatarFor, ICONS } from "@/components/assets";
 import ModuleHelp from "@/components/ModuleHelp";
-import { HIRE_COST, rosterCap, useGuildStore } from "@/store/useGuildStore";
+import { hireCost, rosterCap, useGuildStore } from "@/store/useGuildStore";
 
 const STAT_ROWS = [
   { key: "power", label: "Power", icon: ICONS.power },
@@ -76,7 +76,8 @@ export default function Tavern() {
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {candidates.map((c) => {
-            const cost = c.traits.negative === "glutton" ? HIRE_COST * 2 : HIRE_COST;
+            const base = hireCost(heroes.length);
+            const cost = c.traits.negative === "glutton" ? base * 2 : base;
             const canAffordThis = gold >= cost;
             return (
             <li

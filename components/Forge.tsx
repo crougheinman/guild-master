@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   RECIPES,
@@ -30,16 +30,34 @@ const MAT_ICON: Record<MaterialKey, string> = {
 
 const SUBTYPES = Object.keys(RECIPES) as SubType[];
 
+// live mm:ss/s countdown while the Forge is on cooldown — same ticking idiom
+// as CountdownBar, just inline text instead of a progress bar
+function useCooldownLabel(until: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (until <= Date.now()) return;
+    const id = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(id);
+  }, [until]);
+  const remaining = Math.max(0, until - now);
+  if (remaining <= 0) return null;
+  return `${(remaining / 1000).toFixed(1)}s`;
+}
+
 export default function Forge() {
   const materials = useGuildStore((s) => s.ledger.materials);
   const inventory = useGuildStore((s) => s.inventory);
   const craftItem = useGuildStore((s) => s.craftItem);
+  const craftCooldownUntil = useGuildStore((s) => s.craftCooldownUntil);
   const [selected, setSelected] = useState<SubType>("sword");
 
+  const cooldownLabel = useCooldownLabel(craftCooldownUntil);
   const recipe = RECIPES[selected];
-  const canCraft = (Object.entries(recipe.cost) as [MaterialKey, number][]).every(
-    ([mat, need]) => materials[mat] >= need,
-  );
+  const canCraft =
+    !cooldownLabel &&
+    (Object.entries(recipe.cost) as [MaterialKey, number][]).every(
+      ([mat, need]) => materials[mat] >= need,
+    );
 
   return (
     <div className="p-4">
@@ -98,10 +116,10 @@ export default function Forge() {
             type="button"
             onClick={() => craftItem(selected)}
             disabled={!canCraft}
-            title={canCraft ? undefined : "Not enough materials"}
+            title={cooldownLabel ? undefined : canCraft ? undefined : "Not enough materials"}
             className="min-h-10 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium capitalize text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Craft {selected}
+            {cooldownLabel ? `Cooling down (${cooldownLabel})` : `Craft ${selected}`}
           </button>
         </div>
 

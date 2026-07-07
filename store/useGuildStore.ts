@@ -22,6 +22,19 @@ export type HeroStatus = "idle" | "on_quest" | "injured";
 export type Job = "Archer" | "Lancer" | "Monk" | "Pawn" | "Warrior";
 export const JOBS: Job[] = ["Archer", "Lancer", "Monk", "Pawn", "Warrior"];
 
+// light mechanical lean per job — a ~10% nudge, not a redesign; gear/level/
+// trait progression still dominates. Keeps job from being sprite-only flavor.
+export const JOB_STAT_BONUS: Record<
+  Job,
+  { power?: number; speed?: number; maxFortitude?: number; scavenge?: number }
+> = {
+  Warrior: { maxFortitude: 0.1 },
+  Lancer: { power: 0.1 },
+  Archer: { speed: 0.15 },
+  Monk: { scavenge: 0.1 },
+  Pawn: { maxFortitude: 0.1, power: 0.05 },
+};
+
 export type ItemSlot = "weapon" | "armor" | "boots" | "accessory";
 export type GearSlot = "weapon" | "armor" | "boots" | "accessory1" | "accessory2";
 export type SubType = "dagger" | "sword" | "staff" | "armor" | "boots" | "ring";
@@ -94,7 +107,7 @@ export const POSITIVE_TRAITS: Record<PositiveTraitId, { name: string; blurb: str
 
 export const NEGATIVE_TRAITS: Record<NegativeTraitId, { name: string; blurb: string }> = {
   coward: { name: "Coward", blurb: "Flees boss fights below 40% HP, ignoring potions." },
-  greedy: { name: "Greedy", blurb: "Refuses shop gear priced under 100g." },
+  greedy: { name: "Greedy", blurb: "Refuses shop gear priced under 200g." },
   glutton: { name: "Glutton", blurb: "Costs 2x gold to hire and to heal." },
 };
 
@@ -129,11 +142,12 @@ export interface Hero {
   expToNext: number;
   // note: currentFortitude/maxFortitude live on stats as fortitude/max_fortitude
   stats: HeroStats;
-  attr: HeroAttr; // greed is a 0..1 fraction — Ego Tax adds 0.02, caps at 0.80
+  attr: HeroAttr; // greed is a 0..1 fraction — Ego Tax adds 0.02, caps at 0.50
   traits: { positive: PositiveTraitId; negative: NegativeTraitId };
   status: HeroStatus;
   personal_wealth: number;
   gear: Partial<Record<GearSlot, Item>>;
+  lastDungeonId?: string; // last dungeon this hero was sent to — rotation bonus in tickQuests
 }
 
 export interface LootTable {
@@ -298,6 +312,7 @@ interface GuildState {
   // permanent account progression — survives every hero, never resets
   retiredHeroes: { id: string; name: string; class: string; level: number }[];
   prestigeBuffs: { globalAttackBonus: number; startingLevel: number };
+  craftCooldownUntil: number; // epoch ms — craftItem() no-ops until this passes
   marketRates: MarketRates;
 
   dispatchHero: (heroId: string, dungeonId: string) => void;
@@ -338,7 +353,9 @@ interface GuildState {
 }
 
 const QUEST_FATIGUE = 10; // fortitude lost on a successful run
-const GREED_CAP = 0.8; // Ego Tax ceiling (80%)
+// balance: 80% let a maxed-greed hero's questing net the guild almost
+// nothing — guild now always keeps at least half the raw loot
+const GREED_CAP = 0.5; // Ego Tax ceiling (50%)
 const RIVAL_ROLL_CHANCE = 0.3;
 const BOND_AFFINITY_THRESHOLD = 5;
 
@@ -422,13 +439,25 @@ const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => 
 const MAX_LOG_ENTRIES = 50;
 export const HEAL_COST = 50;
 export const HIRE_COST = 100;
-export const GREEDY_MIN_PRICE = 100;
+// balance: most real gear already costs >=100g, so the old floor rarely
+// triggered — raised so Greedy is an actual downside, not a near-dud
+export const GREEDY_MIN_PRICE = 200;
 export const RETIRE_REP_PER_LEVEL = 50;
+// hire cost scales past the base roster cap — same linear-scaling spirit as
+// facilityUpgradeCost, so roster growth has real cost pressure
+export const HIRE_COST_PER_EXTRA_SLOT = 50;
+export const CRAFT_COOLDOWN_MS = 4000;
+export const hireCost = (currentRosterSize: number) =>
+  HIRE_COST + HIRE_COST_PER_EXTRA_SLOT * Math.max(0, currentRosterSize - BASE_ROSTER_CAP);
 // ── Lineage & Retirement prestige ──
 export const MAX_HERO_LEVEL = 50;
 export const LEGEND_ATTACK_BONUS = 0.02; // +2% global attack per retired Legend
-// startingLevel is +1 per Legend, uncapped — reaching Lv50 takes ~2M exp per
-// hero, so the earn rate self-limits how fast this snowballs
+// uncapped growth eventually trivializes every fight since nothing in boss
+// scaling counters it — ceiling keeps the prestige loop meaningful forever
+export const LEGEND_ATTACK_CAP = 0.5;
+// startingLevel is +1 per Legend, uncapped — reaching Lv50 takes ~4M exp per
+// hero (~674hrs at the best active-grind rate), so the earn rate self-limits
+// how fast this snowballs
 export const BASE_ROSTER_CAP = 3;
 // per-unit base sale price, multiplied by the live market rate
 export const MATERIAL_BASE_PRICE: Record<MaterialKey, number> = {
@@ -550,18 +579,26 @@ export const heroEffects = (hero: Hero): Set<EffectId> => {
 // base + all equipped gear (monocle power penalty applied here)
 export function totalStats(hero: Hero) {
   const fx = heroEffects(hero);
+  const job = JOB_STAT_BONUS[hero.job];
   const basePower = hero.stats.power * (fx.has("monocle") ? 0.75 : 1);
   return {
-    power: Math.round(basePower + gearBonus(hero, "power")),
-    speed: Math.round((hero.stats.speed + gearBonus(hero, "speed")) * 100) / 100,
+    power: Math.round(
+      (basePower + gearBonus(hero, "power")) * (1 + (job.power ?? 0)),
+    ),
+    speed:
+      Math.round(
+        (hero.stats.speed + gearBonus(hero, "speed")) * (1 + (job.speed ?? 0)) * 100,
+      ) / 100,
     maxFortitude: Math.round(
       (hero.stats.max_fortitude + gearBonus(hero, "max_fortitude")) *
-        (hero.traits.positive === "resilient" ? 1.1 : 1),
+        (hero.traits.positive === "resilient" ? 1.1 : 1) *
+        (1 + (job.maxFortitude ?? 0)),
     ),
     scavenge:
       Math.round(
         (hero.attr.scavenge_multiplier + gearBonus(hero, "scavenge")) *
           (hero.traits.positive === "lucky" ? 1.1 : 1) *
+          (1 + (job.scavenge ?? 0)) *
           100,
       ) / 100,
   };
@@ -684,6 +721,7 @@ type GuildData = Pick<
   | "shadyMerchantSeenVisit"
   | "retiredHeroes"
   | "prestigeBuffs"
+  | "craftCooldownUntil"
   | "marketRates"
   | "heroes"
   | "tavernCandidates"
@@ -716,6 +754,7 @@ const initialState = (): GuildData => ({
   shadyMerchantSeenVisit: 0,
   retiredHeroes: [],
   prestigeBuffs: { globalAttackBonus: 0, startingLevel: 1 },
+  craftCooldownUntil: 0,
   marketRates: { organics: 1, minerals: 1, botanicals: 1 },
 
   heroes: [
@@ -1242,8 +1281,10 @@ export const useGuildStore = create<GuildState>()(
               { id: hero.id, name: hero.name, class: hero.job, level: hero.level },
             ],
             prestigeBuffs: {
-              globalAttackBonus:
+              globalAttackBonus: Math.min(
+                LEGEND_ATTACK_CAP,
                 Math.round((prestigeBuffs.globalAttackBonus + LEGEND_ATTACK_BONUS) * 100) / 100,
+              ),
               startingLevel: prestigeBuffs.startingLevel + 1,
             },
           }),
@@ -1461,12 +1502,17 @@ export const useGuildStore = create<GuildState>()(
       },
 
       rollMarket: () => {
-        const roll = () => Math.round(randInt([50, 200])) / 100; // 0.5–2.0
+        // mean-reverting walk, not an independent redraw — prices drift from
+        // where they were instead of teleporting, so timing a sale is a real
+        // (small) strategic choice instead of pure noise with zero EV
+        const { marketRates } = get();
+        const walk = (prev: number) =>
+          Math.round(Math.min(2, Math.max(0.5, prev + (Math.random() - 0.5) * 0.3)) * 100) / 100;
         set({
           marketRates: {
-            organics: roll(),
-            minerals: roll(),
-            botanicals: roll(),
+            organics: walk(marketRates.organics),
+            minerals: walk(marketRates.minerals),
+            botanicals: walk(marketRates.botanicals),
           },
         });
       },
@@ -1488,7 +1534,8 @@ export const useGuildStore = create<GuildState>()(
       },
 
       craftItem: (subType) => {
-        const { ledger, inventory, addLog } = get();
+        const { ledger, inventory, craftCooldownUntil, addLog } = get();
+        if (Date.now() < craftCooldownUntil) return; // spam-click guard
         const recipe = RECIPES[subType];
 
         for (const [mat, need] of Object.entries(recipe.cost) as [MaterialKey, number][]) {
@@ -1540,6 +1587,7 @@ export const useGuildStore = create<GuildState>()(
         set({
           ledger: { ...ledger, materials },
           inventory: [...inventory, item],
+          craftCooldownUntil: Date.now() + CRAFT_COOLDOWN_MS,
         });
         addLog(
           `Crafted a ${rarity[0].toUpperCase() + rarity.slice(1)}${item.prefix ? ` "${item.prefix}"` : ""} ${item.name}!`,
@@ -1642,7 +1690,8 @@ export const useGuildStore = create<GuildState>()(
       hireHero: (candidateId) => {
         const { ledger, heroes, tavernCandidates, upgrades, addLog } = get();
         const candidate = tavernCandidates.find((c) => c.id === candidateId);
-        const cost = candidate?.traits.negative === "glutton" ? HIRE_COST * 2 : HIRE_COST;
+        const base = hireCost(heroes.length);
+        const cost = candidate?.traits.negative === "glutton" ? base * 2 : base;
         if (!candidate || ledger.gold < cost || heroes.length >= rosterCap(upgrades))
           return false;
 
@@ -1758,12 +1807,19 @@ export const useGuildStore = create<GuildState>()(
             dungeon.threat_level * (dungeon.base_duration_ms / 60000),
           );
 
+          // rewards sending a hero somewhere different than their last trip —
+          // without it, one "best" dungeon dominates forever once you outlevel
+          // its threat, and every lower-threat dungeon goes permanently dead
+          const rotationBonus =
+            hero.lastDungeonId && hero.lastDungeonId !== dungeon.id ? 1.15 : 1;
+
           // base hero after quest outcome (stats/wealth), pre-progression
           let base: Hero;
           if (success) {
             const rawGold = Math.round(
               randInt(dungeon.loot_table.gold) *
                 totals.scavenge *
+                rotationBonus *
                 (fx.has("monocle") ? 1.5 : 1),
             );
             const heroCut = Math.round(rawGold * effectiveGreed);
@@ -1779,6 +1835,7 @@ export const useGuildStore = create<GuildState>()(
             ledger = { ...ledger, gold: ledger.gold + guildGold, materials };
             base = {
               ...hero,
+              lastDungeonId: dungeon.id,
               personal_wealth: hero.personal_wealth + heroCut,
               // success still fatigues — unless the Insomniac never sleeps
               stats: {
@@ -1790,7 +1847,7 @@ export const useGuildStore = create<GuildState>()(
             };
             newLogs.push(
               makeLog(
-                `${hero.name} cleared ${dungeon.name}! Earned ${guildGold}g (+${heroCut}g pocketed).`,
+                `${hero.name} cleared ${dungeon.name}!${rotationBonus > 1 ? " (fresh territory bonus)" : ""} Earned ${guildGold}g (+${heroCut}g pocketed).`,
               ),
             );
             newFloats.push({
@@ -1801,7 +1858,7 @@ export const useGuildStore = create<GuildState>()(
             });
           } else {
             // failure wipes fortitude
-            base = { ...hero, stats: { ...hero.stats, fortitude: 0 } };
+            base = { ...hero, lastDungeonId: dungeon.id, stats: { ...hero.stats, fortitude: 0 } };
             newLogs.push(
               makeLog(
                 `${hero.name} failed ${dungeon.name} and was severely injured!`,
