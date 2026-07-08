@@ -17,12 +17,14 @@ export default function GameTicker() {
   const tickTavernRegen = useGuildStore((s) => s.tickTavernRegen);
   const tickExpedition = useGuildStore((s) => s.tickExpedition);
   const tickShadyMerchant = useGuildStore((s) => s.tickShadyMerchant);
+  const tickShopAutoBuy = useGuildStore((s) => s.tickShopAutoBuy);
 
   useEffect(() => {
     tickQuests(); // offline progress
     tickExpedition(); // expeditions that finished while the tab was closed
     tickShadyMerchant(); // expire a merchant who left while the tab was closed
     rollMarket(); // fresh prices on load
+    tickShopAutoBuy(); // pick up anything idle heroes already want
     let seconds = 0;
     const id = setInterval(() => {
       tickQuests();
@@ -30,10 +32,19 @@ export default function GameTicker() {
       tickTavernRegen(); // no-op unless the Tavern facility is leveled
       tickExpedition(); // no-op unless an expedition just completed
       tickShadyMerchant(); // rare spawn roll / expiry check
-      if (++seconds % 60 === 0) rollMarket(); // market shifts every minute
+      if (++seconds % 5 === 0) tickShopAutoBuy(); // heroes browse Shop Stock every 5s
+      if (seconds % 60 === 0) rollMarket(); // market shifts every minute
     }, 1000);
     return () => clearInterval(id);
-  }, [tickQuests, rollMarket, tickBossFight, tickTavernRegen, tickExpedition, tickShadyMerchant]);
+  }, [
+    tickQuests,
+    rollMarket,
+    tickBossFight,
+    tickTavernRegen,
+    tickExpedition,
+    tickShadyMerchant,
+    tickShopAutoBuy,
+  ]);
 
   return null;
 }

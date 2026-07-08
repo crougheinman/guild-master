@@ -10,6 +10,7 @@ import Tooltip from "@/components/Tooltip";
 import {
   CONSUMABLE_PRICE,
   MATERIAL_BASE_PRICE,
+  scrapRefund,
   useGuildStore,
   type MaterialKey,
 } from "@/store/useGuildStore";
@@ -31,6 +32,7 @@ export default function Market() {
   const heroes = useGuildStore((s) => s.heroes);
   const inventory = useGuildStore((s) => s.inventory);
   const heroBuyItem = useGuildStore((s) => s.heroBuyItem);
+  const scrapItem = useGuildStore((s) => s.scrapItem);
   const materials = useGuildStore((s) => s.ledger.materials);
   const marketRates = useGuildStore((s) => s.marketRates);
   const sellMaterial = useGuildStore((s) => s.sellMaterial);
@@ -66,7 +68,7 @@ export default function Market() {
     <div className="p-4">
       <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-100">
         Guild Shop
-        <ModuleHelp text="Three things happen here: sell surplus materials for gold, buy raid consumables (potions/scrolls) from the Apothecary, and sell Forge-crafted gear — heroes buy it themselves using their own personal wealth, so gear only sells if an idle hero can afford it and wants that slot. Rarely, a shady merchant appears with powerful cursed gear — cheap, but every piece carries a permanent drawback." />
+        <ModuleHelp text="Three things happen here: sell surplus materials for gold, buy raid consumables (potions/scrolls) from the Apothecary, and sell Forge-crafted gear — heroes buy it themselves using their own personal wealth, so gear only sells if an idle hero can afford it and wants that slot (they'll also pick it up on their own every few seconds without you clicking anything). Nobody biting? Scrap it back into half its crafting materials instead of letting it sit. Rarely, a shady merchant appears with powerful cursed gear — cheap, but every piece carries a permanent drawback." />
       </h2>
 
       {/* ── Shady Merchant re-entry (only while the event is live) ── */}
@@ -165,46 +167,62 @@ export default function Market() {
           </p>
         ) : (
           <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
-            {inventory.map((item) => (
-              <li
-                key={item.id}
-                className={`rounded-md border bg-slate-900 p-3 ${RARITY_STYLE[item.rarity]}`}
-              >
-                <Tooltip text={rarityBlurb(item)}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <ItemIcon subType={item.subType} size={24} />
-                      <p className="truncate text-sm font-medium">
-                        {item.prefix ? `${item.prefix} ` : ""}
-                        {item.name}
-                      </p>
-                    </span>
-                    <span className="shrink-0 font-mono text-xs tabular-nums text-amber-400">
-                      {item.price}g
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs capitalize opacity-75">
-                    {item.rarity} {item.subType}
-                  </p>
-                  <p className="mt-1 font-mono text-xs tabular-nums text-slate-300">
-                    {statLine(item)}
-                  </p>
-                </Tooltip>
-
-                <button
-                  type="button"
-                  onClick={() => handleSell(item.id)}
-                  className="mt-3 min-h-9 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+            {inventory.map((item) => {
+              const refundLabel = Object.entries(scrapRefund(item))
+                .map(([mat, qty]) => `${qty} ${mat}`)
+                .join(", ");
+              return (
+                <li
+                  key={item.id}
+                  className={`rounded-md border bg-slate-900 p-3 ${RARITY_STYLE[item.rarity]}`}
                 >
-                  Sell to Guild ({item.price}g)
-                </button>
-                {errors[item.id] && (
-                  <p role="alert" className="mt-1.5 text-xs text-rose-400">
-                    {errors[item.id]}
-                  </p>
-                )}
-              </li>
-            ))}
+                  <Tooltip text={rarityBlurb(item)}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <ItemIcon subType={item.subType} size={24} />
+                        <p className="truncate text-sm font-medium">
+                          {item.prefix ? `${item.prefix} ` : ""}
+                          {item.name}
+                        </p>
+                      </span>
+                      <span className="shrink-0 font-mono text-xs tabular-nums text-amber-400">
+                        {item.price}g
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs capitalize opacity-75">
+                      {item.rarity} {item.subType}
+                    </p>
+                    <p className="mt-1 font-mono text-xs tabular-nums text-slate-300">
+                      {statLine(item)}
+                    </p>
+                  </Tooltip>
+
+                  <div className="mt-3 flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSell(item.id)}
+                      className="min-h-9 flex-1 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                    >
+                      Sell to Guild ({item.price}g)
+                    </button>
+                    <Tooltip text="Returns half the materials it cost to craft. Instant, no buyer needed.">
+                      <button
+                        type="button"
+                        onClick={() => scrapItem(item.id)}
+                        className="min-h-9 w-full cursor-pointer rounded-md border border-slate-600 bg-slate-800/60 px-2 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                      >
+                        Scrap (+{refundLabel})
+                      </button>
+                    </Tooltip>
+                  </div>
+                  {errors[item.id] && (
+                    <p role="alert" className="mt-1.5 text-xs text-rose-400">
+                      {errors[item.id]}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

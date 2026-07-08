@@ -329,6 +329,8 @@ interface GuildState {
   hireHero: (candidateId: string) => boolean;
   craftItem: (subType: SubType) => void;
   heroBuyItem: (itemId: string) => boolean;
+  tickShopAutoBuy: () => void;
+  scrapItem: (itemId: string) => boolean;
   removeFloatingText: (id: string) => void;
   triggerHeroChat: (
     heroId: string,
@@ -402,6 +404,47 @@ const applyRaidRelationships = (
 // logs. Each level: +power, +maxFortitude, full heal, +2% greed (Ego Tax).
 // Hard-capped at MAX_HERO_LEVEL — a capped hero pools exp and is eligible to
 // retire as a Legend (Hall of Fame + permanent prestige buffs).
+// Pure — finds the first idle hero who can afford `item`, wants the stat
+// upgrade it carries, and isn't blocked by the Greedy floor. Shared by the
+// manual "Sell to Guild" action and the silent auto-buy tick so both honor
+// the exact same rules (Greedy/Thrifty/Company Man included).
+const findBuyerFor = (
+  heroes: Hero[],
+  item: Item,
+): { buyer: Hero; slot: GearSlot; paid: number } | null => {
+  const statKey = primaryStatKey(item);
+  const itemStat = item.base_stats[statKey] ?? 0;
+
+  const targetSlotFor = (h: Hero): GearSlot | null => {
+    if (item.slot === "accessory") {
+      if (!h.gear.accessory1) return "accessory1";
+      if (!h.gear.accessory2) return "accessory2";
+      const s1 = h.gear.accessory1.base_stats[statKey] ?? 0;
+      const s2 = h.gear.accessory2.base_stats[statKey] ?? 0;
+      const weaker: GearSlot = s1 <= s2 ? "accessory1" : "accessory2";
+      return itemStat > Math.min(s1, s2) ? weaker : null;
+    }
+    const current = h.gear[item.slot];
+    if (!current) return item.slot;
+    return itemStat > (current.base_stats[statKey] ?? 0) ? item.slot : null;
+  };
+
+  const priceFor = (h: Hero) => {
+    const base = heroEffects(h).has("companyman") ? Math.round(item.price * 1.5) : item.price;
+    return h.traits.positive === "thrifty" ? Math.round(base * 0.8) : base;
+  };
+
+  let slot: GearSlot | null = null;
+  const buyer = heroes.find((h) => {
+    if (h.status !== "idle" || h.personal_wealth < priceFor(h)) return false;
+    if (h.traits.negative === "greedy" && priceFor(h) < GREEDY_MIN_PRICE) return false;
+    slot = targetSlotFor(h);
+    return slot !== null;
+  });
+  if (!buyer || !slot) return null;
+  return { buyer, slot, paid: priceFor(buyer) };
+};
+
 const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => {
   let { level, exp, expToNext } = hero;
   let { power, max_fortitude, fortitude } = hero.stats;
@@ -626,6 +669,17 @@ export const RECIPES: Record<SubType, Recipe> = {
   boots: { slot: "boots", name: "Boots", cost: { organics: 2, minerals: 1 }, stat: "max_fortitude", base: 6, priceBase: 50 },
   ring: { slot: "accessory", name: "Ring", cost: { minerals: 5 }, stat: "power", base: 2, priceBase: 120 },
 };
+
+export const SCRAP_REFUND_RATE = 0.5;
+// pure — materials refunded for scrapping an item, so the UI can preview the
+// exact amount before the player clicks (same calc the store action applies)
+export const scrapRefund = (item: Item): Partial<Record<MaterialKey, number>> =>
+  Object.fromEntries(
+    Object.entries(RECIPES[item.subType].cost).map(([mat, qty]) => [
+      mat,
+      Math.ceil((qty as number) * SCRAP_REFUND_RATE),
+    ]),
+  );
 
 const ACCESSORY_EFFECT_CHANCE = 0.6;
 // cumulative weights: 60/25/10/4/1
@@ -1599,41 +1653,17 @@ export const useGuildStore = create<GuildState>()(
         const item = inventory.find((i) => i.id === itemId);
         if (!item) return false;
 
-        const statKey = primaryStatKey(item);
-        const itemStat = item.base_stats[statKey] ?? 0;
-
-        // which gear slot would this hero put the item in? null = doesn't want it
-        const targetSlotFor = (h: Hero): GearSlot | null => {
-          if (item.slot === "accessory") {
-            if (!h.gear.accessory1) return "accessory1"; // fill 1 first
-            if (!h.gear.accessory2) return "accessory2";
-            // both full — replace the weaker on the same stat, if strictly better
-            const s1 = h.gear.accessory1.base_stats[statKey] ?? 0;
-            const s2 = h.gear.accessory2.base_stats[statKey] ?? 0;
-            const weaker: GearSlot = s1 <= s2 ? "accessory1" : "accessory2";
-            return itemStat > Math.min(s1, s2) ? weaker : null;
-          }
-          const current = h.gear[item.slot];
-          if (!current) return item.slot; // empty slot -> wants it
-          return itemStat > (current.base_stats[statKey] ?? 0) ? item.slot : null;
-        };
-
-        // companyman pays a 150% premium, thrifty gets a 20% discount
-        const priceFor = (h: Hero) => {
-          const base = heroEffects(h).has("companyman")
-            ? Math.round(item.price * 1.5)
-            : item.price;
-          return h.traits.positive === "thrifty" ? Math.round(base * 0.8) : base;
-        };
-
-        let slot: GearSlot | null = null;
-        const buyer = heroes.find((h) => {
-          if (h.status !== "idle" || h.personal_wealth < priceFor(h)) return false;
-          if (h.traits.negative === "greedy" && priceFor(h) < GREEDY_MIN_PRICE) return false;
-          slot = targetSlotFor(h);
-          return slot !== null;
-        });
-        if (!buyer || !slot) {
+        const match = findBuyerFor(heroes, item);
+        if (!match) {
+          // companyman pays a 150% premium, thrifty gets a 20% discount —
+          // duplicated (not shared with findBuyerFor) since it's only needed
+          // here to pick which hero grumbles, not for the match itself
+          const priceFor = (h: Hero) => {
+            const base = heroEffects(h).has("companyman")
+              ? Math.round(item.price * 1.5)
+              : item.price;
+            return h.traits.positive === "thrifty" ? Math.round(base * 0.8) : base;
+          };
           const greedyRejector = heroes.find(
             (h) =>
               h.status === "idle" &&
@@ -1661,23 +1691,75 @@ export const useGuildStore = create<GuildState>()(
           return false;
         }
 
-        const paid = priceFor(buyer);
+        const { buyer, slot, paid } = match;
         set({
           ledger: { ...ledger, gold: ledger.gold + paid },
           inventory: inventory.filter((i) => i.id !== itemId),
-          // ponytail: replaced gear is scrapped; return-to-inventory when players notice
+          // ponytail: replaced gear is discarded; return-to-inventory when players notice
           heroes: heroes.map((h) =>
             h.id === buyer.id
               ? {
                   ...h,
                   personal_wealth: h.personal_wealth - paid,
-                  gear: { ...h.gear, [slot as GearSlot]: item },
+                  gear: { ...h.gear, [slot]: item },
                 }
               : h,
           ),
         });
         addLog(
           `${buyer.name} bought ${item.prefix ? `${item.prefix} ` : ""}${item.name} for ${paid}g!`,
+        );
+        return true;
+      },
+
+      tickShopAutoBuy: () => {
+        const { inventory, heroes, ledger, addLog } = get();
+        let curHeroes = heroes;
+        let curLedger = ledger;
+        let curInventory = inventory;
+        const logs: string[] = [];
+
+        for (const item of inventory) {
+          const match = findBuyerFor(curHeroes, item);
+          if (!match) continue;
+          const { buyer, slot, paid } = match;
+          curLedger = { ...curLedger, gold: curLedger.gold + paid };
+          curInventory = curInventory.filter((i) => i.id !== item.id);
+          curHeroes = curHeroes.map((h) =>
+            h.id === buyer.id
+              ? { ...h, personal_wealth: h.personal_wealth - paid, gear: { ...h.gear, [slot]: item } }
+              : h,
+          );
+          logs.push(
+            `${buyer.name} picked up ${item.prefix ? `${item.prefix} ` : ""}${item.name} from stock for ${paid}g.`,
+          );
+        }
+
+        if (logs.length === 0) return; // no-op avoidance — same idiom as tickTavernRegen
+        set({ heroes: curHeroes, ledger: curLedger, inventory: curInventory });
+        for (const l of logs) addLog(l);
+      },
+
+      scrapItem: (itemId) => {
+        const { inventory, ledger, addLog } = get();
+        const item = inventory.find((i) => i.id === itemId);
+        if (!item) return false;
+
+        const refund = scrapRefund(item);
+        const materials = { ...ledger.materials };
+        for (const [mat, qty] of Object.entries(refund) as [MaterialKey, number][]) {
+          materials[mat] += qty;
+        }
+
+        set({
+          ledger: { ...ledger, materials },
+          inventory: inventory.filter((i) => i.id !== itemId),
+        });
+        const refundText = Object.entries(refund)
+          .map(([mat, qty]) => `${qty} ${mat}`)
+          .join(", ");
+        addLog(
+          `Scrapped ${item.prefix ? `${item.prefix} ` : ""}${item.name} for ${refundText}.`,
         );
         return true;
       },
