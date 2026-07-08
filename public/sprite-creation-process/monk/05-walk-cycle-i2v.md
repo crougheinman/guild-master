@@ -16,7 +16,7 @@ Motion:
 - small looping in-place walk
 - subtle vertical bobbing
 - alternating leg steps
-- light shield strap / cape sway
+- light robe/sash sway
 - minimal arm swing
 - feet remain visible
 - character does not translate across the frame

@@ -9,20 +9,20 @@ Primary request:
 Create a single 2560x1024 spritesheet with 10 frames arranged 5 columns x 2 rows. The character faces {DIRECTION_DESCRIPTION} in every frame and performs a subtle idle loop.
 
 Frame sequence:
-Frame 1: neutral relaxed stance, shield resting on forearm.
-Frame 2: slight inhale, shoulders/pauldrons rise by a few pixels.
-Frame 3: cape/cloth trim settles with tiny sway.
+Frame 1: neutral relaxed stance.
+Frame 2: slight inhale, shoulders/robe rise by a few pixels.
+Frame 3: sash/robe hem settles with tiny sway.
 Frame 4: tiny facial/cloth movement while body stays grounded.
-Frame 5: slight exhale, shoulders lower.
-Frame 6: subtle shield-arm sway.
+Frame 5: slight exhale, robe lowers.
+Frame 6: subtle prayer-beads/hand sway.
 Frame 7: return toward neutral.
-Frame 8: tiny cape sway in opposite direction.
+Frame 8: tiny robe sway in opposite direction.
 Frame 9: settle.
 Frame 10: match frame 1 closely for a clean loop.
 
 Composition constraints:
 - one full-body character per frame
-- feet, cape/hem, helm, pauldrons, hands, and shield/sword fully visible
+- feet, robe/hem, head, sleeves, hands, and prayer beads fully visible
 - consistent character size
 - consistent foot baseline
 - consistent center position

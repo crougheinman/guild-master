@@ -3,11 +3,11 @@ Intended use: a single south-facing idle sprite frame for a top-down 2D action g
 Image 1 role: pixel-grid anchor. Use it only to enforce chunky pixel-art block discipline and a centered single-frame composition. Do not copy its content.
 
 Subject:
-- Vito, Warrior, facing SOUTH directly toward the camera in 3/4 top-down game perspective.
+- Sae, Monk, facing SOUTH directly toward the camera in 3/4 top-down game perspective.
 - This is the canonical idle frame.
-- Broad-shouldered, wide stable stance; tall kite-shield silhouette reads clearly on the left side against the body.
-- Burnished steel plate armor with crimson-and-gold cloth trim at the collar and a short cape remnant at the back; open-faced helm with visor up so the face reads.
-- Large kite shield strapped to the left forearm; longsword held loosely at the right hip, not raised.
+- Slender, balanced stance; feet shoulder-width apart, weight centered, silhouette reads calm rather than combative.
+- Jade-green and saffron-orange robe with a sash belt, practical sleeves, fully covering the torso; prayer beads wrapped around one forearm.
+- Fists wrapped in cloth bindings, hands relaxed at the sides or loosely clasped in front — no weapon.
 - calm readable idle expression/pose.
 
 Frame rules:

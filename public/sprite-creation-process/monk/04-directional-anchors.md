@@ -1,7 +1,7 @@
 Intended use: directional anchor sprite for a top-down 2D game character.
 
 Input images:
-Image 1 is the approved south-facing identity anchor for Vito, Warrior. Preserve the same character identity, outfit, palette, proportions, silhouette, accessories, and high-resolution pixelated game-sprite style.
+Image 1 is the approved south-facing identity anchor for Sae, Monk. Preserve the same character identity, outfit, palette, proportions, silhouette, accessories, and high-resolution pixelated game-sprite style.
 Image 2 is an alternating black/white pixel reference. Use it only as a pixel-texture and clean-background guide.
 
 Primary request:
@@ -12,7 +12,7 @@ Pose and direction:
 - Keep both feet visible and stable on the same baseline.
 - Keep hands neutral.
 - No magic/effects/action pose.
-- Preserve readable direction-specific silhouette: kite shield stays strapped to the left forearm — full face-on when facing SOUTH, edge-on and slimmer when facing EAST/WEST, mostly hidden behind the body when facing NORTH; sword stays sheathed at the right hip in every direction.
+- Preserve readable direction-specific silhouette: prayer beads stay wrapped on the same forearm and stay visible when that arm faces the camera; robe sleeves and sash fall naturally for each facing without changing side.
 
 Accessory placement:
 - Keep existing accessories attached naturally to the side/hip/hand where appropriate.
