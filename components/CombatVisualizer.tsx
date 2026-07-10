@@ -5,6 +5,7 @@ import {
   AnimatedSprite,
   Application,
   Assets,
+  Graphics,
   Rectangle,
   Sprite,
   Text,
@@ -21,7 +22,7 @@ import {
   type Clip,
   type JobAnims,
 } from "@/components/assets";
-import { BOSSES, useGuildStore } from "@/store/useGuildStore";
+import { BOSSES, heroEffects, totalStats, useGuildStore } from "@/store/useGuildStore";
 
 const MOB_COUNT = 3; // flavor monsters scattered around a boss fight
 
@@ -458,18 +459,24 @@ export default function CombatVisualizer() {
           style: { fill: 0xe2e8f0, fontSize: back ? 9 : 11, fontFamily: "monospace" },
         });
         label.anchor.set(0.5, 1);
-        label.position.set(cx, feetY - baseUnit * depthScale - 4);
+        label.position.set(cx, feetY - baseUnit * depthScale - 14);
+
+        // real fortitude bar over the hero (enemy has no real HP — none shown)
+        const bar = new Graphics();
 
         return {
+          heroId: hero.id,
           feetY,
           depthScale,
-          nodes: [heroShadow, enemyShadow, heroSprite, enemySprite, label],
+          nodes: [heroShadow, enemyShadow, heroSprite, enemySprite, label, bar],
           heroSprite,
           enemySprite,
           heroAnims,
           enemyAnims,
           heroX,
           enemyX,
+          bar,
+          lastPct: -1,
           attacker: (Math.random() < 0.5 ? "hero" : "enemy") as Side,
           attackClip: 0,
           turnStart: performance.now() + i * 300, // stagger starts
@@ -496,13 +503,78 @@ export default function CombatVisualizer() {
         app.stage.addChild(p);
       };
 
+      // ── live HP bars + real damage numbers, synced to store state ──
+      const drawHpBar = (g: Graphics, x: number, topY: number, w: number, pct: number) => {
+        g.clear();
+        g.rect(x - w / 2, topY, w, 4).fill({ color: 0x1e293b, alpha: 0.9 });
+        if (pct > 0) {
+          // same thresholds as the roster's hpBarColor
+          const color = pct > 0.5 ? 0x10b981 : pct > 0.25 ? 0xf59e0b : 0xf43f5e;
+          g.rect(x - w / 2, topY, w * pct, 4).fill(color);
+        }
+      };
+
+      // exact store-resolved deltas (boss tick damage, hemorrhage, potions) —
+      // floats up and fades, mirroring the roster cards' FloatingText
+      const spawnNumber = (x: number, y: number, msg: string, color: number) => {
+        const label = new Text({
+          text: msg,
+          style: { fill: color, fontSize: 13, fontFamily: "monospace", fontWeight: "bold" },
+        });
+        label.anchor.set(0.5, 1);
+        label.position.set(x, y);
+        app.stage.addChild(label);
+        const born = performance.now();
+        const drift = () => {
+          const e = (performance.now() - born) / 900;
+          if (e >= 1) {
+            app.ticker.remove(drift);
+            label.destroy();
+            return;
+          }
+          label.y = y - e * 26;
+          label.alpha = 1 - e;
+        };
+        app.ticker.add(drift);
+      };
+
+      // fallen heroes stop swinging — desaturate and freeze until a Phoenix
+      // Vial (or the fight ending) brings them back
+      const setDeadLook = (s: AnimatedSprite, dead: boolean) => {
+        if (dead) {
+          s.stop();
+          s.tint = 0x475569;
+          s.alpha = 0.35;
+        } else {
+          s.tint = 0xffffff;
+          s.alpha = 1;
+          s.play();
+        }
+      };
+
       // ── boss mode: one giant boss + crown, party row, flavor mobs ──
+      interface BossHeroEntry {
+        heroId: string;
+        sprite: AnimatedSprite;
+        anims: LoadedAnims;
+        x: number;
+        feetY: number;
+        bar: Graphics;
+        lastPct: number;
+        prevFort: number;
+        dead: boolean;
+      }
       let bossDuel: {
         bossSprite: AnimatedSprite;
         bossAnims: LoadedAnims;
         bossX: number;
         bossFeetY: number;
-        heroEntries: { sprite: AnimatedSprite; anims: LoadedAnims; x: number; feetY: number }[];
+        bossUnit: number;
+        bossBar: Graphics;
+        bossMaxHp: number;
+        prevBossHp: number;
+        lastBossPct: number;
+        heroEntries: BossHeroEntry[];
         currentHero: number;
         attacker: Side;
         attackClip: number;
@@ -547,9 +619,21 @@ export default function CombatVisualizer() {
             style: { fill: 0xe2e8f0, fontSize: 10, fontFamily: "monospace" },
           });
           label.anchor.set(0.5, 1);
-          label.position.set(x, heroFeetY - baseUnit - 4);
+          label.position.set(x, heroFeetY - baseUnit - 14);
           app.stage.addChild(label);
-          return { sprite, anims: heroAnims, x, feetY: heroFeetY };
+          const bar = new Graphics();
+          app.stage.addChild(bar);
+          return {
+            heroId: hero.id,
+            sprite,
+            anims: heroAnims,
+            x,
+            feetY: heroFeetY,
+            bar,
+            lastPct: -1,
+            prevFort: Math.max(0, hero.stats.fortitude),
+            dead: hero.stats.fortitude <= 0,
+          };
         });
 
         app.stage.addChild(makeShadow(bossX, bossFeetY, bossUnit * 0.55));
@@ -572,11 +656,19 @@ export default function CombatVisualizer() {
         bossLabel.position.set(bossX, bossFeetY - bossUnit - 32);
         app.stage.addChild(bossLabel);
 
+        const bossBar = new Graphics();
+        app.stage.addChild(bossBar);
+
         bossDuel = {
           bossSprite,
           bossAnims,
           bossX,
           bossFeetY,
+          bossUnit,
+          bossBar,
+          bossMaxHp: bossDef?.maxHp ?? boss.bossHp,
+          prevBossHp: Math.max(0, boss.bossHp),
+          lastBossPct: -1,
           heroEntries,
           currentHero: 0,
           attacker: (Math.random() < 0.5 ? "hero" : "enemy") as Side,
@@ -588,6 +680,7 @@ export default function CombatVisualizer() {
 
       app.ticker.add(() => {
         const now = performance.now();
+        const st = useGuildStore.getState(); // sim state is the source of truth
 
         // clouds drift
         for (const c of clouds) {
@@ -597,6 +690,48 @@ export default function CombatVisualizer() {
 
         if (bossDuel) {
           const bd = bossDuel;
+
+          // ── sync visuals to the real fight: HP bars, exact damage/heal
+          // numbers from store deltas, dead heroes frozen out ──
+          const fight = st.bossFight;
+          if (fight) {
+            const bossHp = Math.max(0, fight.bossHp);
+            if (bossHp < bd.prevBossHp) {
+              spawnNumber(bd.bossX, bd.bossFeetY - bd.bossUnit - 46, `-${bd.prevBossHp - bossHp}`, 0xfbbf24);
+              bd.prevBossHp = bossHp;
+            }
+            const bossPct = bossHp / bd.bossMaxHp;
+            if (bossPct !== bd.lastBossPct) {
+              bd.lastBossPct = bossPct;
+              drawHpBar(bd.bossBar, bd.bossX, bd.bossFeetY - bd.bossUnit - 42, bd.bossUnit * 0.7, bossPct);
+            }
+            for (const e of bd.heroEntries) {
+              const h = st.heroes.find((x) => x.id === e.heroId);
+              if (!h) continue;
+              const fort = Math.max(0, h.stats.fortitude);
+              if (fort !== e.prevFort) {
+                const delta = fort - e.prevFort;
+                spawnNumber(
+                  e.x,
+                  e.feetY - baseUnit - 18,
+                  delta > 0 ? `+${delta}` : `${delta}`,
+                  delta > 0 ? 0x34d399 : 0xf87171,
+                );
+                e.prevFort = fort;
+              }
+              const pct = fort / totalStats(h).maxFortitude;
+              if (pct !== e.lastPct) {
+                e.lastPct = pct;
+                drawHpBar(e.bar, e.x, e.feetY - baseUnit - 8, baseUnit * 0.55, pct);
+              }
+              const dead = fort <= 0;
+              if (dead !== e.dead) {
+                e.dead = dead;
+                setDeadLook(e.sprite, dead);
+              }
+            }
+          }
+
           const t = now - bd.turnStart;
           if (t >= 0) {
             const atk = bd.attacker === "hero";
@@ -608,30 +743,59 @@ export default function CombatVisualizer() {
             const aHome = atk ? heroEntry.x : bd.bossX;
             const dHome = atk ? bd.bossX : heroEntry.x;
             const dir = atk ? 1 : -1;
+            // if the hero in this exchange fell mid-turn, their sprite stays frozen
+            const heroSideDead = heroEntry.dead;
 
             if (t < RECOVER_AT) {
               const clip = aAnims.attacks[bd.attackClip % aAnims.attacks.length];
-              play(attacker, clip, { loop: false, speed: clip.frames.length / 36 });
-              play(defender, dAnims.guard ?? dAnims.idle, { loop: true, speed: 0.2 });
+              if (!(atk && heroSideDead)) play(attacker, clip, { loop: false, speed: clip.frames.length / 36 });
+              if (!(!atk && heroSideDead)) play(defender, dAnims.guard ?? dAnims.idle, { loop: true, speed: 0.2 });
               const lunge = Math.sin(Math.min(1, t / RECOVER_AT) * Math.PI);
-              attacker.x = aHome + dir * lunge * 22;
+              if (!(atk && heroSideDead)) attacker.x = aHome + dir * lunge * 22;
               if (!bd.struck && t >= STRIKE_AT) {
                 bd.struck = true;
                 spawnParticle(dHome - dir * 8, (atk ? bd.bossFeetY : heroEntry.feetY) - 6, 1);
-                defender.x = dHome + dir * 5;
+                if (!(!atk && heroSideDead)) defender.x = dHome + dir * 5;
               }
             } else if (t < TURN_MS) {
-              play(attacker, aAnims.idle, { loop: true, speed: 0.12 });
-              play(defender, dAnims.idle, { loop: true, speed: 0.12 });
+              if (!(atk && heroSideDead)) play(attacker, aAnims.idle, { loop: true, speed: 0.12 });
+              if (!(!atk && heroSideDead)) play(defender, dAnims.idle, { loop: true, speed: 0.12 });
               attacker.x = aHome;
               defender.x = dHome;
             } else {
-              bd.attacker = Math.random() < 0.5 ? "hero" : "enemy";
-              bd.currentHero = Math.floor(Math.random() * bd.heroEntries.length);
-              bd.attackClip++;
-              bd.struck = false;
-              bd.turnStart = now;
+              // next exchange — only living heroes swing or get targeted, and
+              // the Dread Plate bearer draws every boss blow (mirrors tickBossFight)
+              const living = bd.heroEntries
+                .map((e, i) => ({ e, i }))
+                .filter(({ e }) => !e.dead);
+              if (living.length > 0) {
+                bd.attacker = Math.random() < 0.5 ? "hero" : "enemy";
+                let pick = living[Math.floor(Math.random() * living.length)].i;
+                if (bd.attacker === "enemy") {
+                  const dread = living.find(({ e }) => {
+                    const h = st.heroes.find((x) => x.id === e.heroId);
+                    return h ? heroEffects(h).has("dread") : false;
+                  });
+                  if (dread) pick = dread.i;
+                }
+                bd.currentHero = pick;
+                bd.attackClip++;
+                bd.struck = false;
+                bd.turnStart = now;
+              }
+              // party wiped: hold pose — the store ends the fight and the scene rebuilds
             }
+          }
+        }
+
+        // duel-mode hero HP bars read real fortitude (static mid-quest, but true)
+        for (const d of duels) {
+          const h = st.heroes.find((x) => x.id === d.heroId);
+          if (!h) continue;
+          const pct = Math.max(0, h.stats.fortitude) / totalStats(h).maxFortitude;
+          if (pct !== d.lastPct) {
+            d.lastPct = pct;
+            drawHpBar(d.bar, d.heroX, d.feetY - baseUnit * d.depthScale - 8, baseUnit * 0.5 * d.depthScale, pct);
           }
         }
 
