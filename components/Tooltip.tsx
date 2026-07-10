@@ -1,6 +1,7 @@
 "use client";
 
-// Reusable hover tooltip — pure Tailwind group-hover, no JS state.
+// Reusable hover/focus tooltip — pure Tailwind, no JS state. Also opens when
+// anything inside receives keyboard focus, so the content isn't mouse-only.
 export default function Tooltip({
   text,
   children,
@@ -13,7 +14,7 @@ export default function Tooltip({
       {children}
       <span
         role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 w-max max-w-[240px] -translate-x-1/2 rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs leading-relaxed text-slate-200 opacity-0 shadow-xl transition-opacity duration-150 group-hover/tip:opacity-100"
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 w-max max-w-[240px] -translate-x-1/2 rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs leading-relaxed text-slate-200 opacity-0 shadow-xl transition-opacity duration-150 group-hover/tip:opacity-100 group-focus-within/tip:opacity-100"
       >
         {text}
       </span>

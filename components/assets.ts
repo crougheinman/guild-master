@@ -142,16 +142,20 @@ const HERO_SHEETS: Record<Job, HeroSheetDef> = {
 
 const HERO_CELL = 64;
 
-// stable per-hero variant pick — same hashing idiom as avatarFor, different
-// salt so the portrait and combat sprite don't always correlate
-export function heroVariant(heroId: string, job: Job): number {
-  const pool = HERO_SHEETS[job].variants ?? HERO_VARIANTS;
+// shared deterministic string hash — every "stable pick per id" below uses it
+function hashString(seed: string): number {
   let hash = 0;
-  const seed = `${job}:variant:${heroId}`;
   for (let i = 0; i < seed.length; i++) {
     hash = (hash * 31 + seed.charCodeAt(i)) | 0;
   }
-  return pool[Math.abs(hash) % pool.length];
+  return Math.abs(hash);
+}
+
+// stable per-hero variant pick — salted so the portrait and combat sprite
+// don't always correlate
+export function heroVariant(heroId: string, job: Job): number {
+  const pool = HERO_SHEETS[job].variants ?? HERO_VARIANTS;
+  return pool[hashString(`${job}:variant:${heroId}`) % pool.length];
 }
 
 export function heroCombatAnims(job: Job, heroId: string): JobAnims {
@@ -219,11 +223,7 @@ const MONSTERS = [
 // Orc is one slot in the pool; monsters reuse idle as the attack clip (the
 // lunge tween sells the swing).
 export function monsterAnims(seed: string): JobAnims {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
-  }
-  const n = Math.abs(hash) % (MONSTERS.length + 1);
+  const n = hashString(seed) % (MONSTERS.length + 1);
   if (n === MONSTERS.length) return orcAnims();
   const clip: Clip = {
     url: `/game-assets/Enemies/${MONSTERS[n]}.png`,
@@ -305,10 +305,6 @@ const AVATAR_COUNT = 25;
 
 // stable portrait per hero, derived from id — no schema change, no migration
 export function avatarFor(heroId: string): string {
-  let hash = 0;
-  for (let i = 0; i < heroId.length; i++) {
-    hash = (hash * 31 + heroId.charCodeAt(i)) | 0;
-  }
-  const n = (Math.abs(hash) % AVATAR_COUNT) + 1;
+  const n = (hashString(heroId) % AVATAR_COUNT) + 1;
   return `${UI}/Human Avatars/Avatars_${String(n).padStart(2, "0")}.png`;
 }

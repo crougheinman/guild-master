@@ -129,11 +129,11 @@ export default function Tavern() {
                     ? `Roster full (${heroes.length}/${cap})`
                     : canAffordThis
                       ? undefined
-                      : `Need ${cost} gold`
+                      : `Need ${cost.toLocaleString()} gold`
                 }
                 className="mt-4 min-h-10 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-3 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Hire ({cost}g)
+                Hire ({cost.toLocaleString()}g)
               </button>
             </li>
             );

@@ -116,7 +116,7 @@ export default function Market() {
                   disabled={count === 0}
                   className="mt-2 min-h-9 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Sell {count} for {payout}g
+                  Sell {count} for {payout.toLocaleString()}g
                 </button>
               </li>
             );
@@ -148,7 +148,7 @@ export default function Market() {
                   title={gold < price ? "Not enough gold" : undefined}
                   className="mt-2 min-h-9 w-full cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Buy ({price}g)
+                  Buy ({price.toLocaleString()}g)
                 </button>
               </li>
             );
@@ -186,7 +186,7 @@ export default function Market() {
                         </p>
                       </span>
                       <span className="shrink-0 font-mono text-xs tabular-nums text-amber-400">
-                        {item.price}g
+                        {item.price.toLocaleString()}g
                       </span>
                     </div>
                     <p className="mt-1 text-xs capitalize opacity-75">
@@ -203,7 +203,7 @@ export default function Market() {
                       onClick={() => handleSell(item.id)}
                       className="min-h-9 flex-1 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
                     >
-                      Sell to Guild ({item.price}g)
+                      Sell to Guild ({item.price.toLocaleString()}g)
                     </button>
                     <Tooltip text="Returns half the materials it cost to craft. Instant, no buyer needed.">
                       <button

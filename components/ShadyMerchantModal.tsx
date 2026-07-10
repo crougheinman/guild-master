@@ -119,7 +119,10 @@ export default function ShadyMerchantModal() {
 
               <p className="mt-3 text-xs text-gray-500">
                 Purchases land in your Armory — heroes buy them like any other
-                gear. All sales final. All curses permanent.
+                gear.
+              </p>
+              <p className="mt-1.5 rounded border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-300">
+                ⚠ All sales final. All curses permanent.
               </p>
 
               <button

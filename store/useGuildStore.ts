@@ -5,6 +5,10 @@ import { persist } from "zustand/middleware";
 
 export type MaterialKey = "organics" | "minerals" | "botanicals";
 
+// NAMING: persisted fields are snake_case (max_fortitude, personal_wealth…)
+// and must stay that way — renaming breaks every existing save without a
+// migration. Derived values (totalStats()) are camelCase. Don't mix them up:
+// hero.stats.max_fortitude is BASE, totalStats(hero).maxFortitude includes gear.
 export interface HeroStats {
   power: number;
   fortitude: number; // current HP-like pool; healing restores it
@@ -1776,6 +1780,7 @@ export const useGuildStore = create<GuildState>()(
         let curLedger = ledger;
         let curInventory = inventory;
         const logs: string[] = [];
+        const floats: FloatingText[] = [];
 
         for (const item of inventory) {
           const match = findBuyerFor(curHeroes, item);
@@ -1791,10 +1796,23 @@ export const useGuildStore = create<GuildState>()(
           logs.push(
             `${buyer.name} picked up ${item.prefix ? `${item.prefix} ` : ""}${item.name} from stock for ${paid}g.`,
           );
+          // visible cause-and-effect on the buyer's roster card — without it
+          // the gold/inventory change reads as a mystery
+          floats.push({
+            id: `float-${Date.now()}-${heroSeq++}`,
+            heroId: buyer.id,
+            text: `+${paid}g gear sale`,
+            color: "text-amber-400",
+          });
         }
 
         if (logs.length === 0) return; // no-op avoidance — same idiom as tickTavernRegen
-        set({ heroes: curHeroes, ledger: curLedger, inventory: curInventory });
+        set({
+          heroes: curHeroes,
+          ledger: curLedger,
+          inventory: curInventory,
+          floatingTexts: [...get().floatingTexts, ...floats],
+        });
         for (const l of logs) addLog(l);
       },
 

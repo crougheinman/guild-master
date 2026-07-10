@@ -92,7 +92,9 @@ function GearSlots({ hero }: { hero: Hero }) {
             }
           >
             <span
-              className={`flex size-5 items-center justify-center rounded-sm border ${
+              tabIndex={0}
+              aria-label={item ? `${slot}: ${item.name}` : `${slot}: empty`}
+              className={`flex size-5 items-center justify-center rounded-sm border focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-amber-400 ${
                 item
                   ? `${RARITY_BG[item.rarity]} border-slate-950/40`
                   : "border-slate-700 bg-slate-800/60"
@@ -174,6 +176,11 @@ export default function RightPanel() {
           )}
         </h2>
         <ul className="flex-1 space-y-2 overflow-y-auto p-3">
+          {heroes.length === 0 && (
+            <li className="rounded-md border border-dashed border-slate-700 p-4 text-center text-sm text-slate-500">
+              No heroes yet. Visit the Tavern to hire your first recruit.
+            </li>
+          )}
           {heroes.map((hero) => {
             const { fortitude } = hero.stats;
             const maxFort = totalStats(hero).maxFortitude; // armor counts
@@ -334,44 +341,60 @@ export default function RightPanel() {
                 )}
 
                 <div className="mt-2 flex gap-1.5">
-                  {hurt && hero.status !== "on_quest" && (
-                    <button
-                      type="button"
-                      onClick={() => healHero(hero.id)}
-                      disabled={!canAfford}
-                      title={canAfford ? undefined : `Need ${healCost} gold`}
-                      className="min-h-9 flex-1 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Heal ({healCost}g)
-                    </button>
-                  )}
-                  {hero.status === "idle" &&
-                    (hero.level >= MAX_HERO_LEVEL ? (
-                      // level cap reached — retirement now grants prestige
-                      <Tooltip
-                        text={`Retire ${hero.name} as a LEGEND: +${hero.level * RETIRE_REP_PER_LEVEL} reputation, +2% guild attack forever, and future recruits start 1 level higher. Permanent.`}
-                      >
+                  {(() => {
+                    // always render both actions; disable with the reason
+                    // instead of unmounting so the player can see WHY
+                    const healBlocked = !hurt
+                      ? "Already at full health"
+                      : hero.status === "on_quest"
+                        ? "Out on a quest"
+                        : !canAfford
+                          ? `Need ${healCost.toLocaleString()} gold`
+                          : null;
+                    const busy = hero.status !== "idle";
+                    const busyNote = busy ? " Hero must be idle." : "";
+                    return (
+                      <>
                         <button
                           type="button"
-                          onClick={() => retireHero(hero.id)}
-                          className="min-h-9 w-full cursor-pointer rounded-md border border-yellow-500/50 bg-yellow-500/10 px-2 text-xs font-semibold text-yellow-400 transition-colors hover:bg-yellow-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-400"
+                          onClick={() => healHero(hero.id)}
+                          disabled={healBlocked !== null}
+                          title={healBlocked ?? undefined}
+                          className="min-h-9 flex-1 cursor-pointer rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          ★ Retire as Legend
+                          Heal ({healCost.toLocaleString()}g)
                         </button>
-                      </Tooltip>
-                    ) : (
-                      <Tooltip
-                        text={`Retire ${hero.name} for +${hero.level * RETIRE_REP_PER_LEVEL} reputation. Permanent. Reach Lv ${MAX_HERO_LEVEL} first to retire as a Legend with lasting guild buffs.`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => retireHero(hero.id)}
-                          className="min-h-9 w-full cursor-pointer rounded-md border border-rose-500/40 bg-rose-500/10 px-2 text-xs font-medium text-rose-400 transition-colors hover:bg-rose-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
-                        >
-                          Retire
-                        </button>
-                      </Tooltip>
-                    ))}
+                        {hero.level >= MAX_HERO_LEVEL ? (
+                          // level cap reached — retirement now grants prestige
+                          <Tooltip
+                            text={`Retire ${hero.name} as a LEGEND: +${hero.level * RETIRE_REP_PER_LEVEL} reputation, +2% guild attack forever, and future recruits start 1 level higher. Permanent.${busyNote}`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => retireHero(hero.id)}
+                              disabled={busy}
+                              className="min-h-9 w-full cursor-pointer rounded-md border border-yellow-500/50 bg-yellow-500/10 px-2 text-xs font-semibold text-yellow-400 transition-colors hover:bg-yellow-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-400 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              ★ Retire as Legend
+                            </button>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip
+                            text={`Retire ${hero.name} for +${hero.level * RETIRE_REP_PER_LEVEL} reputation. Permanent. Reach Lv ${MAX_HERO_LEVEL} first to retire as a Legend with lasting guild buffs.${busyNote}`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => retireHero(hero.id)}
+                              disabled={busy}
+                              className="min-h-9 w-full cursor-pointer rounded-md border border-rose-500/40 bg-rose-500/10 px-2 text-xs font-medium text-rose-400 transition-colors hover:bg-rose-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Retire
+                            </button>
+                          </Tooltip>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </li>
             );
