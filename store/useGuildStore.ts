@@ -531,7 +531,7 @@ export const FACILITY_BASE_COST: Record<FacilityKey, number> = {
 // linear scaling: level 0->1 costs base, 1->2 costs 2x base, etc.
 export const facilityUpgradeCost = (facility: FacilityKey, currentLevel: number) =>
   FACILITY_BASE_COST[facility] * (currentLevel + 1);
-const TAVERN_REGEN_PCT_PER_LEVEL = 0.005; // % max HP per idle hero per tick, per level
+const TAVERN_REGEN_PCT_PER_LEVEL = 0.005; // % max HP per idle hero per minute, per level (tickTavernRegen runs on the 60s tick, not every second)
 const FORGE_TIER_BONUS_PER_LEVEL = 5; // added to the crafting rarity roll, per level
 
 // ── offline expeditions (Bounty Board) ──
@@ -715,6 +715,44 @@ const sanitizeHero = (h: Hero): Hero => {
   return valid ? h : { ...h, traits: randomTraits() };
 };
 
+// same self-heal idea as sanitizeHero, for the other nested slices that cross
+// the persist/import boundary — malformed input falls back to `fallback`
+// (the running state's current value) instead of NaN-ing out later
+const MATERIAL_KEYS: MaterialKey[] = ["organics", "minerals", "botanicals"];
+
+const sanitizeMarketRates = (v: unknown, fallback: MarketRates): MarketRates => {
+  const r = v as Partial<MarketRates> | null | undefined;
+  return r && typeof r === "object" && MATERIAL_KEYS.every((k) => typeof r[k] === "number")
+    ? (r as MarketRates)
+    : fallback;
+};
+
+const sanitizeGuildFacilities = (
+  v: unknown,
+  fallback: GuildState["guildFacilities"],
+): GuildState["guildFacilities"] => {
+  const f = v as Partial<GuildState["guildFacilities"]> | null | undefined;
+  return f &&
+    typeof f === "object" &&
+    typeof f.tavernLevel === "number" &&
+    typeof f.forgeLevel === "number" &&
+    typeof f.bountyBoardLevel === "number"
+    ? (f as GuildState["guildFacilities"])
+    : fallback;
+};
+
+const sanitizePrestigeBuffs = (
+  v: unknown,
+  fallback: GuildState["prestigeBuffs"],
+): GuildState["prestigeBuffs"] => {
+  const p = v as Partial<GuildState["prestigeBuffs"]> | null | undefined;
+  return p && typeof p === "object" && typeof p.globalAttackBonus === "number" && typeof p.startingLevel === "number"
+    ? (p as GuildState["prestigeBuffs"])
+    : fallback;
+};
+
+const sanitizeArray = <T,>(v: unknown, fallback: T[]): T[] => (Array.isArray(v) ? (v as T[]) : fallback);
+
 let heroSeq = 0;
 // startingLevel comes from prestigeBuffs — Legacy recruits spawn pre-leveled,
 // using the same per-level gain rolls as gainExp so they aren't stat-cheated
@@ -740,7 +778,9 @@ const rollCandidate = (startingLevel = 1): Hero => {
       speed: randInt([8, 15]) / 10, // 0.8–1.5
     },
     attr: {
-      greed: randInt([5, 25]) / 100,
+      // matches gainExp's +0.02 greed per level-up — a pre-leveled prestige
+      // recruit shouldn't stay cheaper than a hero who leveled there naturally
+      greed: Math.min(GREED_CAP, randInt([5, 25]) / 100 + (level - 1) * 0.02),
       scavenge_multiplier: randInt([8, 15]) / 10,
     },
     traits: randomTraits(),
@@ -948,6 +988,7 @@ export const useGuildStore = create<GuildState>()(
             !Array.isArray(parsed.heroes)
           )
             return false;
+          const before = get();
           // dungeons stay code-defined — old exports must not shadow new content
           set({
             ...parsed,
@@ -955,6 +996,11 @@ export const useGuildStore = create<GuildState>()(
             tavernCandidates: Array.isArray(parsed.tavernCandidates)
               ? (parsed.tavernCandidates as Hero[]).map(sanitizeHero)
               : [],
+            marketRates: sanitizeMarketRates(parsed.marketRates, before.marketRates),
+            guildFacilities: sanitizeGuildFacilities(parsed.guildFacilities, before.guildFacilities),
+            prestigeBuffs: sanitizePrestigeBuffs(parsed.prestigeBuffs, before.prestigeBuffs),
+            consumables: sanitizeArray(parsed.consumables, before.consumables),
+            combatLoadout: sanitizeArray(parsed.combatLoadout, before.combatLoadout),
             floatingTexts: [],
             activeChats: [],
             bossResult: null,
@@ -1104,7 +1150,13 @@ export const useGuildStore = create<GuildState>()(
       tickBossFight: () => {
         const fight = get().bossFight;
         if (!fight) return;
-        const bossDef = BOSSES.find((b) => b.id === fight.bossId)!;
+        const bossDef = BOSSES.find((b) => b.id === fight.bossId);
+        // a corrupted/imported save could carry a bossId that no longer
+        // exists — bail out of the raid instead of crashing on `undefined.x`
+        if (!bossDef) {
+          set({ bossFight: null });
+          return;
+        }
         const { heroes, consumables, combatLoadout, ledger, relationships } = get();
         // a raid persisted before this field existed would rehydrate without
         // it — default instead of crashing on the first tick after upgrade
@@ -1139,6 +1191,9 @@ export const useGuildStore = create<GuildState>()(
           const perHeroExp = Math.floor(bossDef.rewardExp / fight.heroIds.length);
           updated = updated.map((h) => {
             if (!inParty(h)) return h;
+            // fallen heroes stay down — gainExp fully heals on level-up, which
+            // would otherwise revive them for free, bypassing Phoenix Vial
+            if (h.stats.fortitude <= 0) return { ...h, status: "injured" as const };
             const { hero: leveled, logs } = gainExp(h, perHeroExp);
             logs.forEach((l) => newLogs.push(makeLog(l)));
             return {
@@ -1458,7 +1513,10 @@ export const useGuildStore = create<GuildState>()(
           const fx = heroEffects(hero);
           const totals = totalStats(hero);
           // no failure roll — safety is the trade for the low rate (see constants)
-          const rawGold = Math.round(totals.power * EXPEDITION_GOLD_PER_POWER_HOUR * hours * levelBonus);
+          const rawGold = Math.round(
+            totals.power * EXPEDITION_GOLD_PER_POWER_HOUR * hours * levelBonus *
+              (fx.has("monocle") ? 1.5 : 1),
+          );
           const effectiveGreed = Math.max(
             0,
             hero.attr.greed -
@@ -2008,6 +2066,11 @@ export const useGuildStore = create<GuildState>()(
           ...merged,
           heroes: merged.heroes.map(sanitizeHero),
           tavernCandidates: merged.tavernCandidates.map(sanitizeHero),
+          marketRates: sanitizeMarketRates(merged.marketRates, current.marketRates),
+          guildFacilities: sanitizeGuildFacilities(merged.guildFacilities, current.guildFacilities),
+          prestigeBuffs: sanitizePrestigeBuffs(merged.prestigeBuffs, current.prestigeBuffs),
+          consumables: sanitizeArray(merged.consumables, current.consumables),
+          combatLoadout: sanitizeArray(merged.combatLoadout, current.combatLoadout),
         };
       },
       // floatingTexts/activeChats/bossResult are ephemeral juice — never write

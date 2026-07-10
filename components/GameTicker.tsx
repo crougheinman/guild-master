@@ -29,11 +29,14 @@ export default function GameTicker() {
     const id = setInterval(() => {
       tickQuests();
       tickBossFight(); // no-op unless a raid is running
-      tickTavernRegen(); // no-op unless the Tavern facility is leveled
       tickExpedition(); // no-op unless an expedition just completed
       tickShadyMerchant(); // rare spawn roll / expiry check
-      if (++seconds % 5 === 0) tickShopAutoBuy(); // heroes browse Shop Stock every 5s
-      if (seconds % 60 === 0) rollMarket(); // market shifts every minute
+      ++seconds;
+      if (seconds % 5 === 0) tickShopAutoBuy(); // heroes browse Shop Stock every 5s
+      if (seconds % 60 === 0) {
+        rollMarket(); // market shifts every minute
+        tickTavernRegen(); // % max HP per level is meant per minute, not per tick
+      }
     }, 1000);
     return () => clearInterval(id);
   }, [

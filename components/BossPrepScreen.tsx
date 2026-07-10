@@ -155,7 +155,7 @@ export default function BossPrepScreen({
   const [selected, setSelected] = useState<ConsumableId | null>(null);
 
   // falls back to the active fight's boss so reopening mid-raid stays correct
-  const boss = BOSSES.find((b) => b.id === (bossFight?.bossId ?? bossId))!;
+  const boss = BOSSES.find((b) => b.id === (bossFight?.bossId ?? bossId));
 
   const battleReady = (h: Hero) => h.status === "idle" && h.stats.fortitude > 0;
   const party = heroes.filter(battleReady).slice(0, MAX_PARTY);
@@ -196,6 +196,18 @@ export default function BossPrepScreen({
     const stock = consumables.find((c) => c.id === id)?.quantity ?? 0;
     return stock - combatLoadout.filter((l) => l.itemId === id).length;
   };
+
+  // a corrupted/imported save could carry an unknown bossId — bail instead of crashing
+  if (!boss) {
+    return (
+      <div className="p-4 text-sm text-neutral-400">
+        That boss couldn&apos;t be found.{" "}
+        <button onClick={onBack} className="underline">
+          Go back
+        </button>
+      </div>
+    );
+  }
 
   // ── live raid view ──
   if (bossFight) {
