@@ -9,6 +9,7 @@ import Forge from "@/components/Forge";
 import GameTicker from "@/components/GameTicker";
 import GuildHallScreen from "@/components/GuildHallScreen";
 import HallOfFame from "@/components/HallOfFame";
+import GoldPopup from "@/components/GoldPopup";
 import { MobileChatOverlay } from "@/components/HeroChatBubble";
 import Market from "@/components/Market";
 import RightPanel from "@/components/RightPanel";
@@ -78,7 +79,7 @@ export default function Dashboard() {
       {/* ── Mobile top bar: treasury always visible + settings gear ── */}
       <header className="flex shrink-0 items-center gap-3 border-b border-slate-800 bg-slate-900 px-3 py-2 md:hidden">
         {RESOURCES.map((r) => (
-          <span key={r.key} className="flex items-center gap-1">
+          <span key={r.key} className="relative flex items-center gap-1">
             {/* eslint-disable-next-line @next/next/no-img-element -- pixel art */}
             <img src={r.icon} alt={r.label} width={16} height={16} className="pixel size-4 object-contain" />
             <span className="font-mono text-xs tabular-nums text-slate-200">
@@ -86,6 +87,7 @@ export default function Dashboard() {
                 ? (r.key === "gold" ? ledger.gold : ledger.materials[r.key]).toLocaleString()
                 : "—"}
             </span>
+            {r.key === "gold" && <GoldPopup value={ledger.gold} active={hydrated} />}
           </span>
         ))}
         <button
@@ -117,7 +119,7 @@ export default function Dashboard() {
             {RESOURCES.map((r) => (
               <li
                 key={r.key}
-                className="flex items-center gap-2.5 rounded-md bg-slate-800/50 px-3 py-2"
+                className="relative flex items-center gap-2.5 rounded-md bg-slate-800/50 px-3 py-2"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- pixel art: next/image resampling would blur it */}
                 <img
@@ -136,6 +138,7 @@ export default function Dashboard() {
                       ).toLocaleString()
                     : "—"}
                 </span>
+                {r.key === "gold" && <GoldPopup value={ledger.gold} active={hydrated} />}
               </li>
             ))}
           </ul>
