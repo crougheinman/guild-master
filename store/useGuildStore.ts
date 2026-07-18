@@ -180,6 +180,11 @@ export interface ActiveQuest {
   heroId: string;
   dungeonId: string;
   completionTime: number; // epoch ms — evaluated on mount, survives offline
+  startedAt: number; // epoch ms — lets the visualizer chart fight progress by elapsed fraction
+  // outcome is rolled at dispatch (same odds as before, just decided earlier) so
+  // the combat scene can choreograph a real fight that lands on the true result.
+  // optional for back-compat: quests persisted before this field re-roll at completion.
+  outcome?: "win" | "lose";
 }
 
 export interface LogEntry {
@@ -229,6 +234,7 @@ export interface BossFight {
   round: number;
   hasteMul: number; // 1 or 1.5 when a Scroll of Haste fired at combat start
   deadHeroIds: string[]; // accumulates across the raid — fortitude hit 0, even if later revived
+  lastTargetId?: string | null; // hero the boss struck this tick — drives the strike animation
 }
 
 export type RelationshipStatus = "neutral" | "bonded" | "rivals";
@@ -1361,6 +1367,7 @@ export const useGuildStore = create<GuildState>()(
             round: fight.round + 1,
             heroIds: fight.heroIds.filter((id) => !fleeing.includes(id)),
             deadHeroIds: [...deadHeroIds, ...newlyDead],
+            lastTargetId: target?.id ?? null,
           },
           heroes: updated,
           consumables: nextConsumables,
@@ -1901,17 +1908,28 @@ export const useGuildStore = create<GuildState>()(
       },
 
       dispatchHero: (heroId, dungeonId) => {
-        const { heroes, dungeons, activeQuests } = get();
+        const state = get();
+        const { heroes, dungeons, activeQuests } = state;
         const hero = heroes.find((h) => h.id === heroId);
         const dungeon = dungeons.find((d) => d.id === dungeonId);
         if (!hero || !dungeon || hero.status !== "idle") return;
 
+        // outcome decided here (same odds as the old completion-time roll) so the
+        // combat scene can play a real fight that ends the way the sim will.
+        const effectivePower =
+          (totalStats(hero).power + (state.upgrades.includes(UPGRADE_IDS.sharpening) ? 5 : 0)) *
+          (1 + state.prestigeBuffs.globalAttackBonus);
+        const successChance = (effectivePower / dungeon.threat_level) * 100;
+        const outcome: "win" | "lose" = Math.random() * 100 < successChance ? "win" : "lose";
+
+        const now = Date.now();
         const quest: ActiveQuest = {
           heroId,
           dungeonId,
+          startedAt: now,
+          outcome,
           // gear speed counts toward travel time
-          completionTime:
-            Date.now() + dungeon.base_duration_ms / totalStats(hero).speed,
+          completionTime: now + dungeon.base_duration_ms / totalStats(hero).speed,
         };
 
         set({
@@ -1951,8 +1969,12 @@ export const useGuildStore = create<GuildState>()(
           const effectivePower =
             (totals.power + (state.upgrades.includes(UPGRADE_IDS.sharpening) ? 5 : 0)) *
             (1 + state.prestigeBuffs.globalAttackBonus);
-          const successChance = (effectivePower / dungeon.threat_level) * 100;
-          const success = Math.random() * 100 < successChance;
+          // outcome was decided at dispatch; only re-roll for quests persisted
+          // before that field existed (back-compat with old saves)
+          const success =
+            quest.outcome != null
+              ? quest.outcome === "win"
+              : Math.random() * 100 < (effectivePower / dungeon.threat_level) * 100;
           const effectiveGreed = Math.max(
             0,
             hero.attr.greed -

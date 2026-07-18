@@ -42,6 +42,13 @@ const STRIKE_AT = 420; // impact moment inside the turn
 const RECOVER_AT = 750; // both back to idle
 const BACK_SCALE = 0.82; // back-row duels shrink for depth
 
+// boss exchange sub-phases, one exchange per store tick (~1s): the party swings
+// first, then the boss retaliates at whichever hero it really struck this tick
+const B_PARTY_STRIKE = 220;
+const B_PARTY_RECOVER = 430;
+const B_BOSS_STRIKE = 620;
+const B_BOSS_RECOVER = 830;
+
 type Side = "hero" | "enemy";
 
 // a sliced clip carries its own anchorY: LPC oversize (192px) frames keep the
@@ -461,14 +468,16 @@ export default function CombatVisualizer() {
         label.anchor.set(0.5, 1);
         label.position.set(cx, feetY - baseUnit * depthScale - 14);
 
-        // real fortitude bar over the hero (enemy has no real HP — none shown)
+        // both combatants get a real HP bar — the fight trajectory is charted
+        // from the quest's decided outcome (see the duel ticker below)
         const bar = new Graphics();
+        const enemyBar = new Graphics();
 
         return {
           heroId: hero.id,
           feetY,
           depthScale,
-          nodes: [heroShadow, enemyShadow, heroSprite, enemySprite, label, bar],
+          nodes: [heroShadow, enemyShadow, heroSprite, enemySprite, label, bar, enemyBar],
           heroSprite,
           enemySprite,
           heroAnims,
@@ -476,7 +485,12 @@ export default function CombatVisualizer() {
           heroX,
           enemyX,
           bar,
-          lastPct: -1,
+          enemyBar,
+          heroLastPct: -1,
+          enemyLastPct: -1,
+          prevHeroPct: 1,
+          prevEnemyPct: 1,
+          decided: false, // decisive end pose applied
           attacker: (Math.random() < 0.5 ? "hero" : "enemy") as Side,
           attackClip: 0,
           turnStart: performance.now() + i * 300, // stagger starts
@@ -575,11 +589,14 @@ export default function CombatVisualizer() {
         prevBossHp: number;
         lastBossPct: number;
         heroEntries: BossHeroEntry[];
-        currentHero: number;
-        attacker: Side;
+        // exchanges are driven by the real fight's round counter, not a timer —
+        // one party-swing → boss-retaliate exchange plays per store tick
+        lastRound: number;
+        exchangeStart: number;
+        partyStruck: boolean;
+        bossStruck: boolean;
+        targetIdx: number; // heroEntries index the boss hit this round (-1 = none)
         attackClip: number;
-        turnStart: number;
-        struck: boolean;
       } | null = null;
 
       if (boss && bossCfg) {
@@ -670,16 +687,18 @@ export default function CombatVisualizer() {
           prevBossHp: Math.max(0, boss.bossHp),
           lastBossPct: -1,
           heroEntries,
-          currentHero: 0,
-          attacker: (Math.random() < 0.5 ? "hero" : "enemy") as Side,
+          lastRound: -1, // -1 so the first frame kicks off an exchange
+          exchangeStart: 0,
+          partyStruck: false,
+          bossStruck: false,
+          targetIdx: -1,
           attackClip: 0,
-          turnStart: performance.now(),
-          struck: false,
         };
       }
 
       app.ticker.add(() => {
         const now = performance.now();
+        const epoch = Date.now(); // quest progress is measured against epoch timers
         const st = useGuildStore.getState(); // sim state is the source of truth
 
         // clouds drift
@@ -732,77 +751,126 @@ export default function CombatVisualizer() {
             }
           }
 
-          const t = now - bd.turnStart;
-          if (t >= 0) {
-            const atk = bd.attacker === "hero";
-            const heroEntry = bd.heroEntries[bd.currentHero];
-            const attacker = atk ? heroEntry.sprite : bd.bossSprite;
-            const defender = atk ? bd.bossSprite : heroEntry.sprite;
-            const aAnims = atk ? heroEntry.anims : bd.bossAnims;
-            const dAnims = atk ? bd.bossAnims : heroEntry.anims;
-            const aHome = atk ? heroEntry.x : bd.bossX;
-            const dHome = atk ? bd.bossX : heroEntry.x;
-            const dir = atk ? 1 : -1;
-            // if the hero in this exchange fell mid-turn, their sprite stays frozen
-            const heroSideDead = heroEntry.dead;
+          // a new store tick (round change) kicks off one exchange: the whole
+          // living party swings at the boss, then the boss hits its real target
+          if (fight && fight.round !== bd.lastRound) {
+            bd.lastRound = fight.round;
+            bd.exchangeStart = now;
+            bd.partyStruck = false;
+            bd.bossStruck = false;
+            bd.attackClip++;
+            bd.targetIdx = fight.lastTargetId
+              ? bd.heroEntries.findIndex((e) => e.heroId === fight.lastTargetId)
+              : -1;
+          }
 
-            if (t < RECOVER_AT) {
-              const clip = aAnims.attacks[bd.attackClip % aAnims.attacks.length];
-              if (!(atk && heroSideDead)) play(attacker, clip, { loop: false, speed: clip.frames.length / 36 });
-              if (!(!atk && heroSideDead)) play(defender, dAnims.guard ?? dAnims.idle, { loop: true, speed: 0.2 });
-              const lunge = Math.sin(Math.min(1, t / RECOVER_AT) * Math.PI);
-              if (!(atk && heroSideDead)) attacker.x = aHome + dir * lunge * 22;
-              if (!bd.struck && t >= STRIKE_AT) {
-                bd.struck = true;
-                spawnParticle(dHome - dir * 8, (atk ? bd.bossFeetY : heroEntry.feetY) - 6, 1);
-                if (!(!atk && heroSideDead)) defender.x = dHome + dir * 5;
-              }
-            } else if (t < TURN_MS) {
-              if (!(atk && heroSideDead)) play(attacker, aAnims.idle, { loop: true, speed: 0.12 });
-              if (!(!atk && heroSideDead)) play(defender, dAnims.idle, { loop: true, speed: 0.12 });
-              attacker.x = aHome;
-              defender.x = dHome;
-            } else {
-              // next exchange — only living heroes swing or get targeted, and
-              // the Dread Plate bearer draws every boss blow (mirrors tickBossFight)
-              const living = bd.heroEntries
-                .map((e, i) => ({ e, i }))
-                .filter(({ e }) => !e.dead);
-              if (living.length > 0) {
-                bd.attacker = Math.random() < 0.5 ? "hero" : "enemy";
-                let pick = living[Math.floor(Math.random() * living.length)].i;
-                if (bd.attacker === "enemy") {
-                  const dread = living.find(({ e }) => {
-                    const h = st.heroes.find((x) => x.id === e.heroId);
-                    return h ? heroEffects(h).has("dread") : false;
-                  });
-                  if (dread) pick = dread.i;
-                }
-                bd.currentHero = pick;
-                bd.attackClip++;
-                bd.struck = false;
-                bd.turnStart = now;
-              }
-              // party wiped: hold pose — the store ends the fight and the scene rebuilds
+          const te = now - bd.exchangeStart;
+          const targetEntry = bd.targetIdx >= 0 ? bd.heroEntries[bd.targetIdx] : null;
+
+          if (te < B_PARTY_RECOVER) {
+            // ── party phase: every living hero lunges at the boss ──
+            const lunge = Math.sin(Math.min(1, te / B_PARTY_RECOVER) * Math.PI);
+            for (const e of bd.heroEntries) {
+              if (e.dead) continue;
+              const clip = e.anims.attacks[bd.attackClip % e.anims.attacks.length];
+              play(e.sprite, clip, { loop: false, speed: clip.frames.length / 30 });
+              e.sprite.x = e.x + lunge * 16;
             }
+            play(bd.bossSprite, bd.bossAnims.guard ?? bd.bossAnims.idle, { loop: true, speed: 0.14 });
+            if (!bd.partyStruck && te >= B_PARTY_STRIKE) {
+              bd.partyStruck = true;
+              spawnParticle(bd.bossX - 10, bd.bossFeetY - bd.bossUnit * 0.4, 1);
+            }
+          } else if (te < B_BOSS_RECOVER) {
+            // ── boss phase: it retaliates at the hero it really struck ──
+            for (const e of bd.heroEntries) {
+              if (e.dead) continue;
+              play(e.sprite, e.anims.idle, { loop: true, speed: 0.12 });
+              e.sprite.x = e.x;
+            }
+            if (targetEntry && !targetEntry.dead) {
+              const clip = bd.bossAnims.attacks[bd.attackClip % bd.bossAnims.attacks.length];
+              play(bd.bossSprite, clip, { loop: false, speed: clip.frames.length / 30 });
+              const lunge = Math.sin(Math.min(1, (te - B_PARTY_RECOVER) / (B_BOSS_RECOVER - B_PARTY_RECOVER)) * Math.PI);
+              bd.bossSprite.x = bd.bossX - lunge * 24;
+              if (!bd.bossStruck && te >= B_BOSS_STRIKE) {
+                bd.bossStruck = true;
+                spawnParticle(targetEntry.x + 8, targetEntry.feetY - 6, 1);
+              }
+            } else {
+              play(bd.bossSprite, bd.bossAnims.idle, { loop: true, speed: 0.12 });
+              bd.bossSprite.x = bd.bossX;
+            }
+          } else {
+            // ── settle: everyone idle at home until the next tick ──
+            for (const e of bd.heroEntries) {
+              if (e.dead) continue;
+              play(e.sprite, e.anims.idle, { loop: true, speed: 0.12 });
+              e.sprite.x = e.x;
+            }
+            play(bd.bossSprite, bd.bossAnims.idle, { loop: true, speed: 0.12 });
+            bd.bossSprite.x = bd.bossX;
           }
         }
 
-        // duel-mode hero HP bars read real fortitude (static mid-quest, but true)
+        // ── quest duels: a real fight charted from the quest's decided outcome.
+        // Both HP bars trace a trajectory across the quest duration, exchanges
+        // trade real chip damage, and the loser drops as the timer runs out. ──
         for (const d of duels) {
           const h = st.heroes.find((x) => x.id === d.heroId);
-          if (!h) continue;
-          const pct = Math.max(0, h.stats.fortitude) / totalStats(h).maxFortitude;
-          if (pct !== d.lastPct) {
-            d.lastPct = pct;
-            drawHpBar(d.bar, d.heroX, d.feetY - baseUnit * d.depthScale - 8, baseUnit * 0.5 * d.depthScale, pct);
-          }
-        }
+          const q = st.activeQuests.find((x) => x.heroId === d.heroId);
+          if (!h || !q) continue; // quest resolving — scene rebuilds on status change
+          const dg = st.dungeons.find((x) => x.id === q.dungeonId);
+          const maxFort = totalStats(h).maxFortitude;
+          const known = q.outcome != null;
+          const win = q.outcome === "win";
+          const dur = Math.max(1, q.completionTime - q.startedAt);
+          const frac = Math.max(0, Math.min(1, (epoch - q.startedAt) / dur));
+          const enemyMaxHp = dg ? Math.max(20, Math.round(dg.threat_level * 3)) : 60;
 
-        for (const d of duels) {
+          // HP trajectories — hero drains toward the real end state, enemy toward
+          // 0 on a win / a survivor's sliver on a loss
+          const startFortPct = Math.max(0, Math.min(1, h.stats.fortitude / maxFort));
+          const endFortPct = win ? Math.max(0, startFortPct - 10 / maxFort) : 0;
+          const heroPct = known ? startFortPct + (endFortPct - startFortPct) * frac : startFortPct;
+          const enemyEnd = known ? (win ? 0 : 0.4) : 0.5;
+          const enemyPct = 1 + (enemyEnd - 1) * frac;
+
+          const barY = d.feetY - baseUnit * d.depthScale - 8;
+          const barW = baseUnit * 0.5 * d.depthScale;
+          const hKey = Math.round(heroPct * 200);
+          if (hKey !== d.heroLastPct) {
+            d.heroLastPct = hKey;
+            drawHpBar(d.bar, d.heroX, barY, barW, heroPct);
+          }
+          const eKey = Math.round(enemyPct * 200);
+          if (eKey !== d.enemyLastPct) {
+            d.enemyLastPct = eKey;
+            drawHpBar(d.enemyBar, d.enemyX, barY, barW, enemyPct);
+          }
+
+          // decisive finish in the last 10% of the run — loser drops, winner stands
+          if (known && frac >= 0.9) {
+            const k = (frac - 0.9) / 0.1;
+            if (win) {
+              d.enemySprite.tint = 0x475569;
+              d.enemySprite.alpha = 1 - k * 0.85;
+              d.enemySprite.stop();
+              play(d.heroSprite, d.heroAnims.idle, { loop: true, speed: 0.12 });
+              d.heroSprite.x = d.heroX;
+            } else {
+              d.heroSprite.tint = 0x475569;
+              d.heroSprite.alpha = 1 - k * 0.6;
+              d.heroSprite.stop();
+              play(d.enemySprite, d.enemyAnims.idle, { loop: true, speed: 0.12 });
+              d.enemySprite.x = d.enemyX;
+            }
+            continue;
+          }
+
+          // ongoing exchange — attacker lunges, defender takes real chip damage
           const t = now - d.turnStart;
           if (t < 0) continue; // stagger delay
-
           const atk = d.attacker === "hero";
           const attacker = atk ? d.heroSprite : d.enemySprite;
           const defender = atk ? d.enemySprite : d.heroSprite;
@@ -813,31 +881,35 @@ export default function CombatVisualizer() {
           const dir = atk ? 1 : -1; // hero lunges right, enemy lunges left
 
           if (t < RECOVER_AT) {
-            // attack phase: attacker plays attack clip once, defender guards
             const clip = aAnims.attacks[d.attackClip % aAnims.attacks.length];
             play(attacker, clip, { loop: false, speed: clip.frames.length / 36 });
             play(defender, dAnims.guard ?? dAnims.idle, { loop: true, speed: 0.2 });
-
-            // lunge toward the defender and back (scaled by depth)
             const lunge = Math.sin(Math.min(1, t / RECOVER_AT) * Math.PI);
             attacker.x = aHome + dir * lunge * 22 * d.depthScale;
-
             if (!d.struck && t >= STRIKE_AT) {
               d.struck = true;
               spawnParticle(dHome - dir * 8 * d.depthScale, d.feetY - 6, d.depthScale);
-              defender.x = dHome + dir * 5 * d.depthScale; // knockback
+              defender.x = dHome + dir * 5 * d.depthScale;
+              // chip number off the HP the defender shed since the last exchange
+              if (atk) {
+                const drop = Math.max(1, Math.round((d.prevEnemyPct - enemyPct) * enemyMaxHp));
+                spawnNumber(d.enemyX, barY - 4, `-${drop}`, 0xfbbf24);
+              } else {
+                const drop = Math.max(1, Math.round((d.prevHeroPct - heroPct) * maxFort));
+                spawnNumber(d.heroX, barY - 4, `-${drop}`, 0xf87171);
+              }
             }
           } else if (t < TURN_MS) {
-            // recover: both idle, positions restored
             play(attacker, aAnims.idle, { loop: true, speed: 0.12 });
             play(defender, dAnims.idle, { loop: true, speed: 0.12 });
             attacker.x = aHome;
             defender.x = dHome;
           } else {
-            // next exchange: random attacker, next attack variant
             d.attacker = Math.random() < 0.5 ? "hero" : "enemy";
             d.attackClip++;
             d.struck = false;
+            d.prevHeroPct = heroPct;
+            d.prevEnemyPct = enemyPct;
             d.turnStart = now;
           }
         }
