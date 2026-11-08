@@ -59,7 +59,11 @@ export default function Market() {
     clearTimeout(timers.current[itemId]);
     timers.current[itemId] = setTimeout(
       () =>
-        setErrors(({ [itemId]: _dropped, ...rest }) => rest),
+        setErrors((e) => {
+          const next = { ...e };
+          delete next[itemId];
+          return next;
+        }),
       3000,
     );
   };

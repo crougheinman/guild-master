@@ -184,7 +184,7 @@ export default function RightPanel() {
           {heroes.map((hero) => {
             const { fortitude } = hero.stats;
             const maxFort = totalStats(hero).maxFortitude; // armor counts
-            const pct = Math.round((fortitude / maxFort) * 100);
+            const pct = Math.max(0, Math.min(100, Math.round((fortitude / maxFort) * 100)));
             const hurt = fortitude < maxFort;
             const healCost = hero.traits.negative === "glutton" ? HEAL_COST * 2 : HEAL_COST;
             const canAfford = gold >= healCost;

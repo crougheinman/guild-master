@@ -2,31 +2,11 @@
 
 import { ICONS } from "@/components/assets";
 import ModuleHelp from "@/components/ModuleHelp";
-import { UPGRADE_IDS, useGuildStore } from "@/store/useGuildStore";
+import { UPGRADE_DEFS, useGuildStore, type UpgradeId } from "@/store/useGuildStore";
 
-const UPGRADES = [
-  {
-    id: UPGRADE_IDS.beds,
-    name: "Bigger Beds",
-    desc: "+1 max roster size.",
-    gold: 500,
-    reputation: 100,
-  },
-  {
-    id: UPGRADE_IDS.sharpening,
-    name: "Sharpening Stones",
-    desc: "+5 base power to all heroes.",
-    gold: 1000,
-    reputation: 300,
-  },
-  {
-    id: UPGRADE_IDS.taxLoophole,
-    name: "Tax Loophole",
-    desc: "Heroes take 2% less greed cut.",
-    gold: 2000,
-    reputation: 500,
-  },
-] as const;
+const UPGRADES = (Object.entries(UPGRADE_DEFS) as [UpgradeId, (typeof UPGRADE_DEFS)[UpgradeId]][]).map(
+  ([id, def]) => ({ id, ...def }),
+);
 
 export default function Upgrades() {
   const gold = useGuildStore((s) => s.ledger.gold);
@@ -80,7 +60,7 @@ export default function Upgrades() {
 
               <button
                 type="button"
-                onClick={() => buyUpgrade(u.id, { gold: u.gold, reputation: u.reputation })}
+                onClick={() => buyUpgrade(u.id)}
                 disabled={owned || !affordable}
                 title={owned ? undefined : affordable ? undefined : "Not enough gold or reputation"}
                 className={`mt-3 min-h-10 rounded-md border px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${

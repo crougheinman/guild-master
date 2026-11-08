@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Micro-Guildmaster
 
-## Getting Started
+A browser-based idle guild-management RPG. Hire heroes, send them on timed quests,
+raid bosses, craft gear at the Forge and sell it back to your own heroes, and
+retire max-level heroes as Legends for permanent prestige buffs. Progress is saved
+to `localStorage` and keeps ticking while the tab is closed (quests resolve on the
+next load).
 
-First, run the development server:
+Built with Next.js (App Router), React 19, Zustand, Tailwind CSS 4, Framer Motion
+and PixiJS (the live combat stage).
+
+> **Heads up:** this repo uses a Next.js version with breaking changes from older
+> releases. Check `node_modules/next/dist/docs/` before using framework APIs
+> (see `AGENTS.md`).
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Script              | What it does                          |
+| ------------------- | ------------------------------------- |
+| `npm run dev`       | Start the dev server                  |
+| `npm run build`     | Production build                      |
+| `npm start`         | Serve the production build            |
+| `npm run lint`      | ESLint                                |
+| `npm run typecheck` | `tsc --noEmit`                        |
+| `npm test`          | Vitest unit tests for the game store  |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+app/          Next.js shell — page.tsx is the 3-column dashboard (mobile: tabs)
+components/   One component per game screen/modal; assets.ts maps sprite paths
+store/        useGuildStore.ts — ALL game rules and state (Zustand + persist)
+docs/         game-assets-guide.md — sprite sheet notes
+public/       Pixel-art assets
+```
 
-## Learn More
+### The store is the game
 
-To learn more about Next.js, take a look at the following resources:
+`store/useGuildStore.ts` owns every rule: quests, boss raids, expeditions, the
+Forge, the market, prestige. `components/GameTicker.tsx` drives it with a 1-second
+interval (plus one catch-up tick on load for offline progress). UI components only
+read state and call actions — prices and costs are computed in the store, never
+passed in by the UI.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Conventions worth knowing:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Persisted fields are `snake_case`** (`max_fortitude`, `personal_wealth`).
+  Renaming one breaks existing saves without a migration. Derived values from
+  `totalStats()` are `camelCase` and include gear, traits and job bonuses.
+- **Anything crossing the save boundary is sanitized** (`sanitize*` helpers) so a
+  stale or hand-edited save degrades gracefully instead of producing `NaN`.
+- Dungeons are code-defined and deliberately **not** persisted.
+- Bumping the persist `version` currently discards old saves (`migrate` resets).
 
-## Deploy on Vercel
+## Testing
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Unit tests live in `store/__tests__/` and exercise the store directly via
+`useGuildStore.getState()` — no DOM required.

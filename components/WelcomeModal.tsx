@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const SEEN_KEY = "guild-master-welcome-seen";
@@ -16,14 +16,23 @@ const STEPS = [
 // One-time first-launch overview of the game loop. Every module also has its
 // own tap-to-reveal "?" (ModuleHelp) for details once you're in it.
 export default function WelcomeModal() {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!localStorage.getItem(SEEN_KEY)) setOpen(true);
-  }, []);
+  // safe to read storage during render: the dashboard only mounts this after
+  // hydration, so it never runs on the server. try/catch — storage can throw
+  // (Safari private mode, blocked cookies); then just skip the intro.
+  const [open, setOpen] = useState(() => {
+    try {
+      return !localStorage.getItem(SEEN_KEY);
+    } catch {
+      return false;
+    }
+  });
 
   const dismiss = () => {
-    localStorage.setItem(SEEN_KEY, "1");
+    try {
+      localStorage.setItem(SEEN_KEY, "1");
+    } catch {
+      // not persisted — modal simply shows again next visit
+    }
     setOpen(false);
   };
 

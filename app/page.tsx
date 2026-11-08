@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { ICONS } from "@/components/assets";
 import BossResultModal from "@/components/BossResultModal";
 import CombatVisualizer from "@/components/CombatVisualizer";
@@ -59,14 +59,21 @@ const RESOURCES: {
   { key: "botanicals", label: "Botanicals", icon: ICONS.botanicals },
 ];
 
+// the hydration flag never changes after mount, so there is nothing to subscribe to
+const subscribeNever = () => () => {};
+
 export default function Dashboard() {
   const ledger = useGuildStore((s) => s.ledger);
   const [activeTab, setActiveTab] = useState<Tab>("tavern");
 
   // persist middleware hydrates from localStorage on client only —
   // render values after mount to avoid SSR hydration mismatch
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
+  // useSyncExternalStore: false during SSR/hydration, true on the client after
+  const hydrated = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
 
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-slate-950 text-slate-200 md:grid md:grid-cols-[20%_55%_25%]">
