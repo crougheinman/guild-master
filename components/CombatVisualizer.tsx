@@ -22,7 +22,7 @@ import {
   type Clip,
   type JobAnims,
 } from "@/components/assets";
-import { BOSSES, heroEffects, totalStats, useGuildStore } from "@/store/useGuildStore";
+import { BOSSES, totalStats, useGuildStore } from "@/store/useGuildStore";
 
 const MOB_COUNT = 3; // flavor monsters scattered around a boss fight
 
@@ -914,7 +914,11 @@ export default function CombatVisualizer() {
           }
         }
       });
-    })();
+    })().catch((err) => {
+      // a missing sprite/WebGL failure must not become an unhandled rejection
+      // that takes the page down — the stage just stays empty
+      if (!cancelled) console.error("CombatVisualizer: scene build failed", err);
+    });
 
     return () => {
       cancelled = true;

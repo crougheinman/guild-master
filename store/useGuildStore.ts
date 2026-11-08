@@ -349,8 +349,8 @@ interface GuildState {
     durationMs?: number,
   ) => void;
   retireHero: (heroId: string) => void;
-  buyUpgrade: (upgradeId: string, cost: { gold: number; reputation: number }) => void;
-  upgradeFacility: (facility: FacilityKey, cost: number) => void;
+  buyUpgrade: (upgradeId: UpgradeId) => void;
+  upgradeFacility: (facility: FacilityKey) => void;
   tickTavernRegen: () => void;
   startExpedition: (heroIds: string[], durationMs: number) => boolean;
   tickExpedition: () => void;
@@ -410,10 +410,13 @@ const applyRaidRelationships = (
   return next;
 };
 
-// Add exp and run the level-up loop. Pure — returns a new hero + any level
-// logs. Each level: +power, +maxFortitude, full heal, +2% greed (Ego Tax).
-// Hard-capped at MAX_HERO_LEVEL — a capped hero pools exp and is eligible to
-// retire as a Legend (Hall of Fame + permanent prestige buffs).
+// price a given hero pays for shop gear: Company Man's Signet pays 150%,
+// Thrifty gets 20% off. Single source for the buy flow and its "why not" chatter.
+const shopPriceFor = (h: Hero, item: Item): number => {
+  const base = heroEffects(h).has("companyman") ? Math.round(item.price * 1.5) : item.price;
+  return h.traits.positive === "thrifty" ? Math.round(base * 0.8) : base;
+};
+
 // Pure — finds the first idle hero who can afford `item`, wants the stat
 // upgrade it carries, and isn't blocked by the Greedy floor. Shared by the
 // manual "Sell to Guild" action and the silent auto-buy tick so both honor
@@ -439,10 +442,7 @@ const findBuyerFor = (
     return itemStat > (current.base_stats[statKey] ?? 0) ? item.slot : null;
   };
 
-  const priceFor = (h: Hero) => {
-    const base = heroEffects(h).has("companyman") ? Math.round(item.price * 1.5) : item.price;
-    return h.traits.positive === "thrifty" ? Math.round(base * 0.8) : base;
-  };
+  const priceFor = (h: Hero) => shopPriceFor(h, item);
 
   let slot: GearSlot | null = null;
   const buyer = heroes.find((h) => {
@@ -455,20 +455,26 @@ const findBuyerFor = (
   return { buyer, slot, paid: priceFor(buyer) };
 };
 
-const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => {
+// Add exp and run the level-up loop. Pure — returns a new hero + any level
+// logs. Each level: +power, +maxFortitude, full heal, +2% greed (Ego Tax).
+// Hard-capped at MAX_HERO_LEVEL — a capped hero pools exp and is eligible to
+// retire as a Legend (Hall of Fame + permanent prestige buffs).
+export const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => {
   let { level, exp, expToNext } = hero;
-  let { power, max_fortitude, fortitude } = hero.stats;
+  let { power, max_fortitude } = hero.stats;
+  const { fortitude } = hero.stats;
   let greed = hero.attr.greed;
   const logs: string[] = [];
+  let leveledUp = false;
 
   exp += amount;
   while (exp >= expToNext && level < MAX_HERO_LEVEL) {
     exp -= expToNext;
     level += 1;
+    leveledUp = true;
     expToNext = Math.floor(Math.pow(level, 2) * 100);
     power += randInt([2, 4]);
     max_fortitude += randInt([10, 20]);
-    fortitude = max_fortitude; // fully restore
     greed = Math.min(GREED_CAP, greed + 0.02);
     logs.push(
       level === MAX_HERO_LEVEL
@@ -477,17 +483,19 @@ const gainExp = (hero: Hero, amount: number): { hero: Hero; logs: string[] } => 
     );
   }
 
-  return {
-    hero: {
-      ...hero,
-      level,
-      exp,
-      expToNext,
-      stats: { ...hero.stats, power, max_fortitude, fortitude },
-      attr: { ...hero.attr, greed },
-    },
-    logs,
+  const next: Hero = {
+    ...hero,
+    level,
+    exp,
+    expToNext,
+    stats: { ...hero.stats, power, max_fortitude, fortitude },
+    attr: { ...hero.attr, greed },
   };
+  // a level-up fully restores fortitude — to the TOTAL pool (gear, Resilient,
+  // job bonus), not the bare base. Restoring to base max would actually HURT a
+  // well-geared hero whose current HP sits above their base pool.
+  if (leveledUp) next.stats.fortitude = totalStats(next).maxFortitude;
+  return { hero: next, logs };
 };
 const MAX_LOG_ENTRIES = 50;
 export const HEAL_COST = 50;
@@ -525,6 +533,32 @@ export const UPGRADE_IDS = {
   sharpening: "sharpening-stones", // +5 power in tickQuests
   taxLoophole: "tax-loophole", // -2% greed cut in tickQuests
 } as const;
+
+export type UpgradeId = (typeof UPGRADE_IDS)[keyof typeof UPGRADE_IDS];
+// costs live in the store (not the UI) so buyUpgrade can't be handed a bogus price
+export const UPGRADE_DEFS: Record<
+  UpgradeId,
+  { name: string; desc: string; gold: number; reputation: number }
+> = {
+  [UPGRADE_IDS.beds]: {
+    name: "Bigger Beds",
+    desc: "+1 max roster size.",
+    gold: 500,
+    reputation: 100,
+  },
+  [UPGRADE_IDS.sharpening]: {
+    name: "Sharpening Stones",
+    desc: "+5 base power to all heroes.",
+    gold: 1000,
+    reputation: 300,
+  },
+  [UPGRADE_IDS.taxLoophole]: {
+    name: "Tax Loophole",
+    desc: "Heroes take 2% less greed cut.",
+    gold: 2000,
+    reputation: 500,
+  },
+};
 
 export const rosterCap = (upgrades: string[]) =>
   BASE_ROSTER_CAP + (upgrades.includes(UPGRADE_IDS.beds) ? 1 : 0);
@@ -763,6 +797,26 @@ const sanitizePrestigeBuffs = (
 
 const sanitizeArray = <T,>(v: unknown, fallback: T[]): T[] => (Array.isArray(v) ? (v as T[]) : fallback);
 
+const finiteOr = (v: unknown, fallback: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : fallback;
+
+// a ledger with a missing/NaN field would poison every later `gold + x`
+// into NaN — coerce field by field, keeping whatever is valid
+const sanitizeLedger = (v: unknown, fallback: Ledger): Ledger => {
+  const l = v as Partial<Ledger> | null | undefined;
+  if (!l || typeof l !== "object") return fallback;
+  const m = (l.materials ?? {}) as Partial<Record<MaterialKey, unknown>>;
+  return {
+    gold: finiteOr(l.gold, fallback.gold),
+    reputation: finiteOr(l.reputation, fallback.reputation),
+    materials: {
+      organics: finiteOr(m.organics, 0),
+      minerals: finiteOr(m.minerals, 0),
+      botanicals: finiteOr(m.botanicals, 0),
+    },
+  };
+};
+
 let heroSeq = 0;
 // startingLevel comes from prestigeBuffs — Legacy recruits spawn pre-leveled,
 // using the same per-level gain rolls as gainExp so they aren't stat-cheated
@@ -774,7 +828,7 @@ const rollCandidate = (startingLevel = 1): Hero => {
     power += randInt([2, 4]);
     maxFort += randInt([10, 20]);
   }
-  return {
+  const hero: Hero = {
     id: `hero-${Date.now()}-${heroSeq++}`,
     name: CANDIDATE_NAMES[randInt([0, CANDIDATE_NAMES.length - 1])],
     job: JOBS[randInt([0, JOBS.length - 1])],
@@ -798,6 +852,9 @@ const rollCandidate = (startingLevel = 1): Hero => {
     personal_wealth: 0,
     gear: {},
   };
+  // max includes the Resilient trait + job bonus — start full, not "hurt"
+  hero.stats.fortitude = totalStats(hero).maxFortitude;
+  return hero;
 };
 
 const randInt = ([min, max]: [number, number]) =>
@@ -841,6 +898,13 @@ type GuildData = Pick<
   | "activeChats"
 >;
 
+// the starter hero's trait (Resilient) and job (Warrior) raise max HP above the
+// base pool — without this the very first screen shows a hero already "hurt"
+const withFullFortitude = (h: Hero): Hero => ({
+  ...h,
+  stats: { ...h.stats, fortitude: totalStats(h).maxFortitude },
+});
+
 // fresh defaults each call — shared by store creation and wipeSave
 const initialState = (): GuildData => ({
   ledger: {
@@ -862,7 +926,7 @@ const initialState = (): GuildData => ({
   marketRates: { organics: 1, minerals: 1, botanicals: 1 },
 
   heroes: [
-    {
+    withFullFortitude({
       id: "hero-1",
       name: "Brakka",
       job: "Warrior",
@@ -875,7 +939,7 @@ const initialState = (): GuildData => ({
       status: "idle",
       personal_wealth: 0,
       gear: {},
-    },
+    }),
   ],
 
   tavernCandidates: [], // filled client-side by refreshTavern — keeps SSR deterministic
@@ -1006,11 +1070,19 @@ export const useGuildStore = create<GuildState>()(
             tavernCandidates: Array.isArray(parsed.tavernCandidates)
               ? (parsed.tavernCandidates as Hero[]).map(sanitizeHero)
               : [],
+            ledger: sanitizeLedger(parsed.ledger, before.ledger),
             marketRates: sanitizeMarketRates(parsed.marketRates, before.marketRates),
             guildFacilities: sanitizeGuildFacilities(parsed.guildFacilities, before.guildFacilities),
             prestigeBuffs: sanitizePrestigeBuffs(parsed.prestigeBuffs, before.prestigeBuffs),
             consumables: sanitizeArray(parsed.consumables, before.consumables),
             combatLoadout: sanitizeArray(parsed.combatLoadout, before.combatLoadout),
+            upgrades: sanitizeArray(parsed.upgrades, []),
+            relationships: sanitizeArray(parsed.relationships, []),
+            retiredHeroes: sanitizeArray(parsed.retiredHeroes, []),
+            inventory: sanitizeArray(parsed.inventory, []),
+            eventLog: sanitizeArray(parsed.eventLog, []),
+            activeQuests: sanitizeArray(parsed.activeQuests, []),
+            shadyMerchantInventory: sanitizeArray(parsed.shadyMerchantInventory, []),
             floatingTexts: [],
             activeChats: [],
             bossResult: null,
@@ -1186,8 +1258,11 @@ export const useGuildStore = create<GuildState>()(
             else if (rel?.status === "rivals") synergyMod -= 0.05;
           }
         }
+        // Sharpening Stones promise +5 power to ALL heroes — quests already honor
+        // it; raids must too, or the upgrade silently does nothing for bosses
+        const sharpen = get().upgrades.includes(UPGRADE_IDS.sharpening) ? 5 : 0;
         const partyDmg = Math.round(
-          living.reduce((sum, h) => sum + totalStats(h).power, 0) *
+          living.reduce((sum, h) => sum + totalStats(h).power + sharpen, 0) *
             fight.hasteMul *
             (1 + synergyMod) *
             (1 + get().prestigeBuffs.globalAttackBonus), // Legends watch over the guild
@@ -1416,30 +1491,33 @@ export const useGuildStore = create<GuildState>()(
         );
       },
 
-      buyUpgrade: (upgradeId, cost) => {
+      buyUpgrade: (upgradeId) => {
         const { ledger, upgrades, addLog } = get();
+        const def = UPGRADE_DEFS[upgradeId];
         if (
+          !def ||
           upgrades.includes(upgradeId) ||
-          ledger.gold < cost.gold ||
-          ledger.reputation < cost.reputation
+          ledger.gold < def.gold ||
+          ledger.reputation < def.reputation
         )
           return;
 
         set({
           ledger: {
             ...ledger,
-            gold: ledger.gold - cost.gold,
-            reputation: ledger.reputation - cost.reputation,
+            gold: ledger.gold - def.gold,
+            reputation: ledger.reputation - def.reputation,
           },
           upgrades: [...upgrades, upgradeId],
         });
-        addLog(`Guild upgrade purchased: ${upgradeId}.`);
+        addLog(`Guild upgrade purchased: ${def.name}.`);
       },
 
-      upgradeFacility: (facility, cost) => {
+      upgradeFacility: (facility) => {
         const { ledger, guildFacilities, addLog } = get();
         const levelKey = `${facility}Level` as const;
         const currentLevel = guildFacilities[levelKey];
+        const cost = facilityUpgradeCost(facility, currentLevel);
         if (currentLevel >= FACILITY_MAX_LEVEL || ledger.gold < cost) return;
 
         set({
@@ -1724,15 +1802,7 @@ export const useGuildStore = create<GuildState>()(
 
         const match = findBuyerFor(heroes, item);
         if (!match) {
-          // companyman pays a 150% premium, thrifty gets a 20% discount —
-          // duplicated (not shared with findBuyerFor) since it's only needed
-          // here to pick which hero grumbles, not for the match itself
-          const priceFor = (h: Hero) => {
-            const base = heroEffects(h).has("companyman")
-              ? Math.round(item.price * 1.5)
-              : item.price;
-            return h.traits.positive === "thrifty" ? Math.round(base * 0.8) : base;
-          };
+          const priceFor = (h: Hero) => shopPriceFor(h, item);
           const greedyRejector = heroes.find(
             (h) =>
               h.status === "idle" &&
@@ -2104,8 +2174,13 @@ export const useGuildStore = create<GuildState>()(
         };
         return {
           ...merged,
-          heroes: merged.heroes.map(sanitizeHero),
-          tavernCandidates: merged.tavernCandidates.map(sanitizeHero),
+          ledger: sanitizeLedger(merged.ledger, current.ledger),
+          heroes: sanitizeArray<Hero>(merged.heroes, current.heroes).map(sanitizeHero),
+          tavernCandidates: sanitizeArray<Hero>(merged.tavernCandidates, []).map(sanitizeHero),
+          upgrades: sanitizeArray(merged.upgrades, []),
+          relationships: sanitizeArray(merged.relationships, []),
+          inventory: sanitizeArray(merged.inventory, []),
+          activeQuests: sanitizeArray(merged.activeQuests, []),
           marketRates: sanitizeMarketRates(merged.marketRates, current.marketRates),
           guildFacilities: sanitizeGuildFacilities(merged.guildFacilities, current.guildFacilities),
           prestigeBuffs: sanitizePrestigeBuffs(merged.prestigeBuffs, current.prestigeBuffs),

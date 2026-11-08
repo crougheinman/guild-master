@@ -3,6 +3,7 @@
 import { ICONS } from "@/components/assets";
 import ModuleHelp from "@/components/ModuleHelp";
 import {
+  EXPEDITION_DURATIONS_MS,
   FACILITY_MAX_LEVEL,
   facilityUpgradeCost,
   useGuildStore,
@@ -16,7 +17,7 @@ const FACILITIES: { key: FacilityKey; name: string; buff: (level: number) => str
     buff: (level) =>
       level === 0
         ? "No passive regen yet."
-        : `Idle heroes regen ${(0.5 * level).toFixed(1)}% max HP/sec.`,
+        : `Idle heroes regen ${(0.5 * level).toFixed(1)}% max HP/min.`,
   },
   {
     key: "forge",
@@ -32,7 +33,7 @@ const FACILITIES: { key: FacilityKey; name: string; buff: (level: number) => str
     buff: (level) =>
       level === 0
         ? "Locked — reach Lv 1 to unlock Offline Expeditions in the Dungeons tab."
-        : `Offline Expeditions unlocked — up to ${[1, 2, 4, 8, 12][Math.min(level, 5) - 1]}h trips, +${5 * (level - 1)}% gold.`,
+        : `Offline Expeditions unlocked — up to ${EXPEDITION_DURATIONS_MS[Math.min(level, 5) - 1] / 3_600_000}h trips, +${5 * (level - 1)}% gold.`,
   },
 ];
 
@@ -85,7 +86,7 @@ export default function GuildHallScreen() {
 
               <button
                 type="button"
-                onClick={() => upgradeFacility(f.key, cost)}
+                onClick={() => upgradeFacility(f.key)}
                 disabled={maxed || !affordable}
                 title={maxed ? undefined : affordable ? undefined : "Not enough gold"}
                 className={`mt-3 min-h-10 rounded-md border px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
