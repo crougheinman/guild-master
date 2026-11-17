@@ -48,6 +48,7 @@ export const DUNGEON_ART: Record<string, string> = {
 // Frames laid out horizontally; frame size differs per job (Lancer is 320px).
 // Only Warrior/Lancer ship guard clips — others idle while defending.
 import type { Job } from "@/store/useGuildStore";
+import { SPRITECAST_HEROES } from "@/components/spritecastHeroes";
 
 export type Team = "Blue" | "Red";
 
@@ -55,11 +56,17 @@ export interface Clip {
   url: string;
   frames: number;
   row?: number; // which row of a multi-row grid sheet (0 = single-strip file)
-  size?: number; // per-clip cell override — LPC "oversize" weapon anims are 192px
+  size?: number; // per-clip cell HEIGHT override — LPC "oversize" weapon anims are 192px
+  // frame width when cells aren't square (SpriteCast strips are e.g. 165×256).
+  // Omitted = square, width === height === size.
+  width?: number;
+  // explicit pivot as a fraction of the frame (feet point). Overrides the
+  // oversize-LPC heuristic — SpriteCast ships the exact anchor per character.
+  anchor?: { x: number; y: number };
 }
 
 export interface JobAnims {
-  size: number; // square frame edge in px
+  size: number; // frame height in px (also the edge for square cells) — drives on-screen scale
   idle: Clip;
   attacks: Clip[]; // one is picked at random per swing
   guard?: Clip;
@@ -159,6 +166,12 @@ export function heroVariant(heroId: string, job: Job): number {
 }
 
 export function heroCombatAnims(job: Job, heroId: string): JobAnims {
+  // generated SpriteCast art wins when a job has any registered (see
+  // spritecastHeroes.ts); jobs without entries keep the LPC sheets below
+  const generated = SPRITECAST_HEROES[job];
+  if (generated && generated.length > 0) {
+    return generated[hashString(`${job}:spritecast:${heroId}`) % generated.length];
+  }
   const sheet = HERO_SHEETS[job];
   const n = heroVariant(heroId, job);
   const url = `/game-assets/Heroes/${job}/${job.toLowerCase()}-${n}.png`;

@@ -56,6 +56,7 @@ type Side = "hero" | "enemy";
 // instead of the bottom — anchoring per clip keeps feet planted on swap
 interface LoadedClip {
   frames: Texture[];
+  anchorX: number;
   anchorY: number;
 }
 
@@ -65,16 +66,29 @@ interface LoadedAnims {
   guard: LoadedClip | null;
 }
 
-function sliceStrip(base: Texture, frames: number, size: number, row = 0): Texture[] {
+// cells are width × height; square sheets pass the same number for both
+function sliceStrip(
+  base: Texture,
+  frames: number,
+  width: number,
+  height: number,
+  row = 0,
+): Texture[] {
   return Array.from(
     { length: frames },
     (_, i) =>
       new Texture({
         source: base.source,
-        frame: new Rectangle(i * size, row * size, size, size),
+        frame: new Rectangle(i * width, row * height, width, height),
       }),
   );
 }
+
+// a clip's cell: height from clip.size / the job default, width defaults square
+const cellOf = (clip: Clip, cfgSize: number) => {
+  const h = clip.size ?? cfgSize;
+  return { w: clip.width ?? h, h };
+};
 
 // mobile GPUs commonly cap textures at 4096px — the hero master sheets are up
 // to 5760px tall and upload as a black box there. For oversized sources, copy
@@ -104,16 +118,22 @@ function loadRawImage(url: string): Promise<HTMLImageElement> {
   return p;
 }
 
-function extractRow(img: HTMLImageElement, frames: number, size: number, row: number): Texture {
+function extractRow(
+  img: HTMLImageElement,
+  frames: number,
+  width: number,
+  height: number,
+  row: number,
+): Texture {
   const canvas = document.createElement("canvas");
-  canvas.width = frames * size;
-  canvas.height = size;
+  canvas.width = frames * width;
+  canvas.height = height;
   const ctx = canvas.getContext("2d")!;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(
     img,
-    0, row * size, frames * size, size,
-    0, 0, frames * size, size,
+    0, row * height, frames * width, height,
+    0, 0, frames * width, height,
   );
   const tex = Texture.from(canvas);
   tex.source.scaleMode = "nearest";
@@ -126,14 +146,28 @@ async function preloadOversizeRows(
   loaded: Record<string, Texture>,
   cfgs: JobAnims[],
 ): Promise<Map<string, Texture>> {
-  const jobs: { key: string; url: string; size: number; row: number; frames: number }[] = [];
+  const jobs: {
+    key: string;
+    url: string;
+    width: number;
+    height: number;
+    row: number;
+    frames: number;
+  }[] = [];
   for (const cfg of cfgs) {
     for (const clip of [cfg.idle, ...cfg.attacks, ...(cfg.guard ? [cfg.guard] : [])]) {
       const base = loaded[clip.url];
       if (base.source.pixelWidth <= MAX_GPU_TEX && base.source.pixelHeight <= MAX_GPU_TEX) continue;
-      const size = clip.size ?? cfg.size;
+      const { w, h } = cellOf(clip, cfg.size);
       const row = clip.row ?? 0;
-      jobs.push({ key: `${clip.url}#${row}#${size}`, url: clip.url, size, row, frames: clip.frames });
+      jobs.push({
+        key: `${clip.url}#${row}#${w}x${h}`,
+        url: clip.url,
+        width: w,
+        height: h,
+        row,
+        frames: clip.frames,
+      });
     }
   }
   const extracted = new Map<string, Texture>();
@@ -141,7 +175,7 @@ async function preloadOversizeRows(
     jobs.map(async (j) => {
       if (extracted.has(j.key)) return;
       const img = await loadRawImage(j.url);
-      extracted.set(j.key, extractRow(img, j.frames, j.size, j.row));
+      extracted.set(j.key, extractRow(img, j.frames, j.width, j.height, j.row));
     }),
   );
   return extracted;
@@ -155,14 +189,16 @@ function sliceClip(
 ): LoadedClip {
   const base = loaded[clip.url];
   base.source.scaleMode = "nearest"; // crisp pixel art
-  const size = clip.size ?? cfgSize;
-  // oversize cell: body block centered → feet at (size/2 + cfgSize/2)
-  const anchorY = size === cfgSize ? 1 : (size / 2 + cfgSize / 2) / size;
+  const { w, h } = cellOf(clip, cfgSize);
+  // an explicit anchor (SpriteCast) wins; otherwise oversize LPC cell: body
+  // block centered → feet at (size/2 + cfgSize/2)
+  const anchorX = clip.anchor?.x ?? 0.5;
+  const anchorY = clip.anchor?.y ?? (h === cfgSize ? 1 : (h / 2 + cfgSize / 2) / h);
 
   const row = clip.row ?? 0;
-  const pre = extracted.get(`${clip.url}#${row}#${size}`);
+  const pre = extracted.get(`${clip.url}#${row}#${w}x${h}`);
   const strip = pre ?? base;
-  return { frames: sliceStrip(strip, clip.frames, size, pre ? 0 : row), anchorY };
+  return { frames: sliceStrip(strip, clip.frames, w, h, pre ? 0 : row), anchorX, anchorY };
 }
 
 function loadAnimSet(
@@ -186,7 +222,7 @@ function play(
   if (sprite._clip === clip) return;
   sprite._clip = clip;
   sprite.textures = clip.frames;
-  sprite.anchor.y = clip.anchorY;
+  sprite.anchor.set(clip.anchorX, clip.anchorY);
   sprite.loop = opts.loop;
   sprite.animationSpeed = opts.speed;
   sprite.gotoAndPlay(0);
@@ -344,7 +380,7 @@ export default function CombatVisualizer() {
       for (let i = 0; i < bushRow; i++) {
         const variant = pick(BACKDROP.bushes);
         const frame = Math.floor(rand(0, BACKDROP.bushFrames));
-        const tex = sliceStrip(loaded[variant], BACKDROP.bushFrames, BACKDROP.bushSize)[frame];
+        const tex = sliceStrip(loaded[variant], BACKDROP.bushFrames, BACKDROP.bushSize, BACKDROP.bushSize)[frame];
         const y = horizonY + rand(2, 14);
         const b = new Sprite(tex);
         b.anchor.set(0.5, 1);
@@ -356,7 +392,7 @@ export default function CombatVisualizer() {
       for (let i = 0; i < Math.round(rand(3, 5)); i++) {
         const variant = pick(BACKDROP.bushes);
         const frame = Math.floor(rand(0, BACKDROP.bushFrames));
-        const tex = sliceStrip(loaded[variant], BACKDROP.bushFrames, BACKDROP.bushSize)[frame];
+        const tex = sliceStrip(loaded[variant], BACKDROP.bushFrames, BACKDROP.bushSize, BACKDROP.bushSize)[frame];
         const y = rand(horizonY + bandH * 0.3, H - 6);
         const b = new Sprite(tex);
         b.anchor.set(0.5, 1);
@@ -382,7 +418,7 @@ export default function CombatVisualizer() {
       // a few animated water-rocks (wet stones) low on the field
       for (let i = 0; i < Math.round(rand(2, 4)); i++) {
         const variant = pick(BACKDROP.waterRocks);
-        const frames = sliceStrip(loaded[variant], BACKDROP.waterRockFrames, BACKDROP.waterRockSize);
+        const frames = sliceStrip(loaded[variant], BACKDROP.waterRockFrames, BACKDROP.waterRockSize, BACKDROP.waterRockSize);
         const wr = new AnimatedSprite(frames);
         wr.anchor.set(0.5, 1);
         const y = rand(horizonY + bandH * 0.55, H - 4);

@@ -56,3 +56,7 @@ Untouched, available for future work:
 - Resource sprites: Wood (trees, logs), Meat (sheep), Tools
 - Tilemap_color2–5 (palette swaps)
 - UI Banners, Buttons, Bars, Cursors, Papers, Ribbons, Swords, Wood Table
+
+## Generated hero sprites (SpriteCast)
+
+Heroes can be swapped to [SpriteCast](https://github.com/sunghwan0112/spritecast) output per job, without touching the Tiny Swords/LPC assets for anything else. Register strips in `components/spritecastHeroes.ts` (empty = no change; see the header comment there for the field-by-field mapping from SpriteCast's `character.json`). The combat stage supports non-square frames (`Clip.width`) and explicit feet anchors (`Clip.anchor`) for this; portraits (`avatarFor`) are unchanged.
